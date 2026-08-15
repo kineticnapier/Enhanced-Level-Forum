@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import type { LevelDetail, LevelListItem, ProposalRow, ReferenceRow, SessionUser, UserRole } from '@adoforum/shared'
+import type { LevelDetail, LevelListItem, ProposalRow, ReferenceRow, SessionUser, UserRole } from '@elf/shared'
 import { api } from './api'
 import './styles.css'
 
@@ -20,14 +20,14 @@ function App() {
       ? ['overview','levels','references','proposals','imports','audit']
       : ['overview','references','imports']
   return <div className="admin-shell">
-    <aside><div className="brand">AdoForum <span>Admin</span></div><p className="who">{user.displayName}<small>{user.role}</small></p>{staffTabs.map((x)=><button key={x} className={tab===x?'active':''} onClick={()=>setTab(x)}>{x}</button>)}<button className="logout" onClick={async()=>{await api('/auth/logout',{method:'POST'});setUser(null)}}>Logout</button></aside>
+    <aside><div className="brand">ELF <span>Admin</span></div><p className="who">{user.displayName}<small>{user.role}</small></p>{staffTabs.map((x)=><button key={x} className={tab===x?'active':''} onClick={()=>setTab(x)}>{x}</button>)}<button className="logout" onClick={async()=>{await api('/auth/logout',{method:'POST'});setUser(null)}}>Logout</button></aside>
     <main>{tab==='overview'&&<Overview/>}{tab==='levels'&&<Levels user={user}/>} {tab==='references'&&<References/>}{tab==='proposals'&&<Proposals/>}{tab==='users'&&<Users user={user}/>} {tab==='imports'&&<Imports/>}{tab==='audit'&&<Audit/>}</main>
   </div>
 }
 
 function Login({onLogin}:{onLogin:(u:SessionUser)=>void}){
   const [email,setEmail]=useState(''); const [password,setPassword]=useState(''); const [error,setError]=useState('')
-  return <div className="center"><div className="panel login"><p className="eyebrow">Staff</p><h1>AdoForum Admin</h1><label>Email<input value={email} onChange={(e)=>setEmail(e.target.value)}/></label><label>Password<input type="password" value={password} onChange={(e)=>setPassword(e.target.value)}/></label>{error&&<p className="error">{error}</p>}<button onClick={async()=>{try{const x=await api<{user:SessionUser}>('/auth/login',{method:'POST',body:JSON.stringify({email,password})});onLogin(x.user)}catch(e){setError(e instanceof Error?e.message:'Login failed')}}}>Login</button></div></div>
+  return <div className="center"><div className="panel login"><p className="eyebrow">Staff</p><h1>Enhanced Level Forum Admin</h1><label>Email<input value={email} onChange={(e)=>setEmail(e.target.value)}/></label><label>Password<input type="password" value={password} onChange={(e)=>setPassword(e.target.value)}/></label>{error&&<p className="error">{error}</p>}<button onClick={async()=>{try{const x=await api<{user:SessionUser}>('/auth/login',{method:'POST',body:JSON.stringify({email,password})});onLogin(x.user)}catch(e){setError(e instanceof Error?e.message:'Login failed')}}}>Login</button></div></div>
 }
 
 function Overview(){const [data,setData]=useState<any>(null);useEffect(()=>{void api('/admin/overview').then(setData)},[]);return <><Head title="Overview"/><div className="stats">{[['Levels',data?.levels],['References needing review',data?.references_needing_review],['Open proposals',data?.open_proposals],['Users',data?.users]].map(([k,v])=><div className="stat" key={String(k)}><span>{k}</span><strong>{v??'—'}</strong></div>)}</div><div className="panel"><h2>Operational rule</h2><p>Reference chartのrerateを止めない。canonical ratingがReference slotから外れた場合はReferenceを自動で <code>NEEDS_REVIEW</code> にする。</p></div></>}

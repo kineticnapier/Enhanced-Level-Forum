@@ -1,25 +1,28 @@
 {
-  "name": "adoforum-cloudflare",
-  "version": "0.2.5",
+  "name": "enhanced-level-forum",
+  "version": "0.3.0",
   "private": true,
   "workspaces": [
     "apps/*",
     "packages/*"
   ],
   "scripts": {
-    "dev:api": "npm -w @adoforum/api run dev",
-    "dev:web": "npm -w @adoforum/web run dev",
-    "dev:admin": "npm -w @adoforum/admin run dev",
+    "setup:local": "node scripts/setup-local.mjs",
+    "dev:api": "node scripts/dev-api.mjs",
+    "dev:web": "npm -w @elf/web run dev",
+    "dev:admin": "npm -w @elf/admin run dev",
     "build": "npm run build:shared && npm run build:api && npm run build:web && npm run build:admin",
-    "build:shared": "npm -w @adoforum/shared run build",
-    "build:api": "npm -w @adoforum/api run build",
-    "build:web": "npm -w @adoforum/web run build",
-    "build:admin": "npm -w @adoforum/admin run build",
-    "deploy:api": "npm -w @adoforum/api run deploy",
-    "deploy:web": "npm -w @adoforum/web run deploy",
-    "deploy:admin": "npm -w @adoforum/admin run deploy",
+    "build:shared": "npm -w @elf/shared run build",
+    "build:api": "npm -w @elf/api run build",
+    "build:web": "npm -w @elf/web run build",
+    "build:admin": "npm -w @elf/admin run build",
+    "deploy:api": "npm -w @elf/api run deploy",
+    "deploy:web": "npm -w @elf/web run deploy",
+    "deploy:admin": "npm -w @elf/admin run deploy",
     "db:migrate": "node scripts/apply-migrations.mjs",
-    "smoke": "node scripts/smoke.mjs"
+    "smoke": "node scripts/smoke.mjs",
+    "test": "npm run build && npm run smoke",
+    "test:e2e": "node scripts/e2e-smoke.mjs"
   },
   "devDependencies": {
     "typescript": "^5.8.0"

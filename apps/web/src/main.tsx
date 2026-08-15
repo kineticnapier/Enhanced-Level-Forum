@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import type { Family, LevelDetail, LevelListItem, ProposalRow, PublicStats, ReferenceRow, SessionUser } from '@adoforum/shared'
-import { RATING_LEAN_LABELS } from '@adoforum/shared'
+import type { Family, LevelDetail, LevelListItem, ProposalRow, PublicStats, ReferenceRow, SessionUser } from '@elf/shared'
+import { RATING_LEAN_LABELS } from '@elf/shared'
 import { api } from './api'
 import './styles.css'
 
@@ -45,7 +45,7 @@ function App() {
 
   return <div className="shell">
     <header className="topbar">
-      <a className="brand" href="#/">AdoForum <span>α</span></a>
+      <a className="brand" href="#/">ELF <span>Enhanced Level Forum</span></a>
       <nav>
         <a href="#/levels">Levels</a>
         <a href="#/references">References</a>

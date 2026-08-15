@@ -1,5 +1,5 @@
 import type { MiddlewareHandler } from 'hono'
-import type { SessionUser, UserRole } from '@adoforum/shared'
+import type { SessionUser, UserRole } from '@elf/shared'
 import { withDb } from './db'
 import type { Env } from './env'
 import { parseCookies } from './http'
@@ -21,7 +21,7 @@ export function hasRole(user: SessionUser | null, minimum: UserRole): boolean {
 }
 
 export const loadUser: MiddlewareHandler<AppBindings> = async (c, next) => {
-  const token = parseCookies(c.req.header('Cookie')).adoforum_session
+  const token = parseCookies(c.req.header('Cookie')).elf_session
   if (!token) {
     c.set('user', null)
     return next()

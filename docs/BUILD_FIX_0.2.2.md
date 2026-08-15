@@ -14,4 +14,4 @@ interface ImportMeta {
 }
 ```
 
-This intentionally declares only the environment variable currently consumed by AdoForum and does not rely on ambient Vite client declarations.
+This intentionally declares only the environment variable currently consumed by Enhanced Level Forum and does not rely on ambient Vite client declarations.

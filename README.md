@@ -1,10 +1,8 @@
 # Enhanced Level Forum (ELF)
 
-Current development version: **v0.2.5**
+Current development version: **v0.3.0**
 
-Enhanced Level Forum is an ADOFAI difficulty forum/database built around versioned level data, auditable rating history, rerating proposals, and non-sacred References.
-
-The application is split into three independently deployable pieces:
+Enhanced Level Forum is an ADOFAI difficulty forum/database built around versioned level data, auditable rating history, rerating proposals, and reviewable References.
 
 ```text
 forum.example.com  -> apps/web    React/Vite public frontend
@@ -15,7 +13,7 @@ api.example.com    -> apps/api    Hono Cloudflare Worker
                                Hyperdrive -> PostgreSQL
 ```
 
-PostgreSQL is the source of truth. Frontend deployments are disposable static builds; the API is the only writer.
+PostgreSQL is the source of truth. The frontends are disposable static deployments; the API is the only writer.
 
 ## Rating model
 
@@ -23,135 +21,63 @@ ELF deliberately does **not** publish a 100-step `G9 Mid-High` style official sc
 
 - Canonical rating: integer `P/G/U` tier such as `G9`.
 - Human evidence: integer anchor tier + a five-step lean `-2..2`.
-- The lean can be aggregated internally (`G9 + slightly high`, etc.) but never silently becomes a canonical decimal rating.
+- The lean may be aggregated internally, but never silently becomes a canonical decimal rating.
 - Reference `position_hint` uses the same coarse scale only as descriptive metadata.
-
-This keeps human input coarse while preserving enough evidence to notice borderline rerates.
 
 ## Data rules
 
 1. `Level` and `LevelVersion` are separate. SHA-256 belongs to a version.
 2. Canonical ratings are historical rows; publishing a rerate closes the previous current row.
-3. Reference charts may be rerated. A mismatch marks the old Reference `NEEDS_REVIEW` instead of blocking the rerate.
+3. Reference charts may be rerated. A mismatch marks the Reference `NEEDS_REVIEW` instead of blocking the rerate.
 4. Community votes, canonical decisions, external imports and Analyzer predictions remain separate datasets.
 5. TUF / Clastar Galaxy imports are raw observations until a human workflow promotes a decision.
 6. Administrative writes are audited.
 
-## Repository layout
-
-```text
-apps/
-  api/       Hono Worker + Hyperdrive/Postgres
-  web/       public React/Vite frontend
-  admin/     staff React/Vite frontend
-packages/
-  shared/    shared types and rating semantics
-db/
-  migrations/
-scripts/
-  apply-migrations.mjs
-  smoke.mjs
-docs/
-  ARCHITECTURE.md
-  DEPLOY.md
-  API.md
-  SECURITY.md
-```
-
 ## Fresh local setup
-
-The following example is for Windows / PowerShell.
 
 Requirements:
 
-- Node.js 20+ (22 recommended)
-- PostgreSQL, including the `psql` command-line tools
+- Node.js 20+
+- PostgreSQL server
 - Git
-- A Cloudflare account is **not** required for local UI/API development
 
-### 1. Clone and install dependencies
+A Cloudflare account is **not** required for local development.
 
 ```powershell
 git clone https://github.com/kineticnapier/Enhanced-Level-Forum.git
 cd Enhanced-Level-Forum
 npm install
+npm run setup:local
 ```
 
-### 2. Verify PostgreSQL
+`setup:local` is idempotent. It:
 
-```powershell
-psql --version
-```
+- creates `.env` from `.env.example` if needed;
+- creates `apps/api/.dev.vars`, `apps/web/.env.local`, and `apps/admin/.env.local` from their examples without overwriting existing files;
+- connects to PostgreSQL;
+- creates the database if it does not exist;
+- applies all pending migrations.
 
-If `psql` is not found, add the PostgreSQL `bin` directory to `PATH`. A typical installation path is:
-
-```text
-C:\Program Files\PostgreSQL\18\bin
-```
-
-The version number may differ.
-
-### 3. Create the local database
-
-A fresh PostgreSQL installation does not contain the ELF database. Create it first:
-
-```powershell
-psql -U postgres -d postgres -c 'CREATE DATABASE adoforum;'
-```
-
-`psql` will ask for the password of the PostgreSQL `postgres` user.
-
-The database is currently named `adoforum` internally for compatibility with the existing development configuration. It is only an internal database name and does not affect the ELF project name.
-
-If the database already exists, skip this command.
-
-### 4. Apply database migrations
-
-Set the connection string for the migration script. Replace `<PASSWORD>` with the password chosen when PostgreSQL was installed:
-
-```powershell
-$env:DATABASE_URL="postgres://postgres:<PASSWORD>@127.0.0.1:5432/adoforum"
-npm run db:migrate
-```
-
-A successful first migration should end with:
-
-```text
-apply 001_initial.sql
-apply 002_seed_tags.sql
-migrations complete
-```
-
-Later runs are safe; already-applied migrations are skipped.
-
-### 5. Configure the API development secrets
-
-```powershell
-Copy-Item apps/api/.dev.vars.example apps/api/.dev.vars
-Get-Content apps/api/.dev.vars
-```
-
-`.dev.vars` is ignored by Git and must not be committed.
-
-The bootstrap admin is created only when the first login exactly matches `BOOTSTRAP_ADMIN_EMAIL` and `BOOTSTRAP_ADMIN_PASSWORD` from this file. Once a real admin account exists, change or remove the bootstrap credentials before deployment.
-
-### 6. Configure the Worker's local database connection
-
-The checked-in Wrangler config assumes the development connection string:
+The default connection is:
 
 ```text
 postgres://postgres:postgres@127.0.0.1:5432/adoforum
 ```
 
-If your PostgreSQL password is not `postgres`, override it for the current PowerShell session instead of committing your password to `wrangler.jsonc`:
+The database is still named `adoforum` internally for compatibility with existing development databases. The project/product name is ELF.
+
+If your PostgreSQL password is not `postgres`, set the connection before the first setup run:
 
 ```powershell
-$env:CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE="postgres://postgres:<PASSWORD>@127.0.0.1:5432/adoforum"
+$env:DATABASE_URL="postgres://postgres:<PASSWORD>@127.0.0.1:5432/adoforum"
+npm run setup:local
 ```
 
-Use the same database credentials for `DATABASE_URL` and the Hyperdrive local connection string.
+The generated `.env` is ignored by Git. Later shells do not need to export `DATABASE_URL`; the development and migration scripts read `.env` automatically.
 
-### 7. Run the three development servers
+If PostgreSQL authentication fails, edit `.env` and rerun `npm run setup:local`.
+
+## Run locally
 
 Open three terminals in the repository root:
 
@@ -169,54 +95,102 @@ npm run dev:admin
 
 Open:
 
-- public: `http://localhost:5173`
-- admin: `http://localhost:5174`
+- Public: `http://localhost:5173`
+- Admin: `http://localhost:5174`
 - API health: `http://localhost:8787/api/health`
 
-A healthy local API/database connection returns approximately:
+Expected health response:
 
 ```json
-{"ok":true,"database":true,"version":"0.2.5"}
+{"ok":true,"database":true,"version":"0.3.0"}
 ```
 
-Use `localhost` consistently for browser-facing services. Do not mix it with `127.0.0.1`, because the local session cookie uses `SameSite=Lax` and mixing hosts makes authenticated browser requests cross-site.
+Use `localhost` consistently for browser-facing services. Do not mix it with `127.0.0.1`; the local session cookie is `SameSite=Lax`.
 
-## Existing checkout: update and migrate
+The root `dev:api` command reads `DATABASE_URL` from `.env` and automatically supplies it to Wrangler's local Hyperdrive binding. Database passwords therefore do not need to be committed to `wrangler.jsonc`.
 
-After pulling new commits:
+## Bootstrap admin
+
+`npm run setup:local` creates `apps/api/.dev.vars` from the checked-in example if the file is missing.
+
+The initial example credentials are development-only:
+
+```text
+Email:    admin@example.com
+Password: change-me-immediately
+```
+
+The bootstrap account is created only when a login exactly matches `BOOTSTRAP_ADMIN_EMAIL` / `BOOTSTRAP_ADMIN_PASSWORD` and that email is not already present in the database. Change/remove the bootstrap credentials before a public deployment.
+
+## Tests
+
+Static/build checks:
+
+```powershell
+npm test
+```
+
+DB/API integration smoke test:
+
+```powershell
+# terminal 1
+npm run dev:api
+
+# terminal 2
+npm run test:e2e
+```
+
+The E2E test creates a unique temporary ADMIN user and level, then verifies:
+
+```text
+login
+ -> create level/version
+ -> publish G9
+ -> add ACTIVE G9 reference
+ -> rerate to G10
+ -> reference becomes NEEDS_REVIEW
+ -> create proposal
+ -> approve proposal
+ -> audit entry exists
+```
+
+The temporary level/user and their audit rows are removed afterward, including when the test fails after creation.
+
+## Existing checkout
 
 ```powershell
 git pull
 npm install
-$env:DATABASE_URL="postgres://postgres:<PASSWORD>@127.0.0.1:5432/adoforum"
-npm run db:migrate
+npm run setup:local
+npm test
 ```
 
-Then restart the API/web/admin development servers.
+`setup:local` does not overwrite existing local secrets/config files and safely skips already-applied migrations.
 
-## Build
+## Repository layout
 
-```powershell
-npm run build
-npm run smoke
+```text
+apps/
+  api/       Hono Worker + Hyperdrive/Postgres
+  web/       public React/Vite frontend
+  admin/     staff React/Vite frontend
+packages/
+  shared/    shared types and rating semantics
+db/
+  migrations/
+scripts/
+  setup-local.mjs
+  apply-migrations.mjs
+  dev-api.mjs
+  smoke.mjs
+  e2e-smoke.mjs
+docs/
+  ARCHITECTURE.md
+  DEPLOY.md
+  API.md
+  SECURITY.md
 ```
 
 ## Production deployment
 
-See `docs/DEPLOY.md` for Hyperdrive, secrets, CORS origins and custom domains.
-
-## Development notes
-
-### PostgreSQL `REFERENCES` migration fix
-
-PostgreSQL reserves `REFERENCES` as SQL syntax. An early migration used `references` as a table name, which failed with PostgreSQL error `42601`. The physical table is now named `difficulty_references`; public API routes remain `/api/references`.
-
-### Local authentication host rule
-
-For cookie authentication in local development, use `localhost` consistently for all three browser-facing services:
-
-- Public: `http://localhost:5173`
-- Admin: `http://localhost:5174`
-- API: `http://localhost:8787`
-
-Do not mix `localhost` and `127.0.0.1`. Login can otherwise appear successful while subsequent authenticated API calls return `401 Unauthorized`.
+See `docs/DEPLOY.md` for Hyperdrive, production secrets, CORS origins and custom domains.

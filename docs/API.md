@@ -1,8 +1,8 @@
-# API v0.2
+# API v0.3
 
-Base URL in development: `http://127.0.0.1:8787/api`.
+Base URL in development: `http://localhost:8787/api`.
 
-All browser writes use the HttpOnly `adoforum_session` cookie and `credentials: include`.
+All browser writes use the HttpOnly `elf_session` cookie and `credentials: include`.
 
 ## Public/auth
 
@@ -73,4 +73,4 @@ Canonical rerate body:
 }
 ```
 
-There is no canonical decimal `value` field in v0.2.
+There is no canonical decimal `value` field in v0.3.

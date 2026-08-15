@@ -6,12 +6,12 @@
 Public browser                     Staff browser
       |                                 |
       v                                 v
-adoforum-web Worker              adoforum-admin Worker
+enhanced-level-forum-web Worker       enhanced-level-forum-admin Worker
       |                                 |
       +-------------- HTTPS ------------+
                      |
                      v
-               adoforum-api Worker
+               enhanced-level-forum-api Worker
                      |
                  Hyperdrive
                      |

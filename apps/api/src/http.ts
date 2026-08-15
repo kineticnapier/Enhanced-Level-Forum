@@ -18,7 +18,7 @@ export function parseCookies(header: string | undefined): Record<string, string>
 
 export function sessionCookie(env: Env, token: string, maxAgeSeconds: number): string {
   const parts = [
-    `adoforum_session=${encodeURIComponent(token)}`,
+    `elf_session=${encodeURIComponent(token)}`,
     'Path=/',
     'HttpOnly',
     'SameSite=Lax',

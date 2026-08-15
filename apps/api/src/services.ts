@@ -1,4 +1,4 @@
-import type { Family, RatingLean, ReferenceStatus } from '@adoforum/shared'
+import type { Family, RatingLean, ReferenceStatus } from '@elf/shared'
 import type { DbClient } from './db'
 import { inTransaction } from './db'
 
