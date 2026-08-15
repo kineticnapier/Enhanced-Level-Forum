@@ -1,6 +1,6 @@
 {
-  "name": "@adoforum/web",
-  "version": "0.2.5",
+  "name": "@elf/web",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,7 +9,7 @@
     "deploy": "npm run build && wrangler deploy"
   },
   "dependencies": {
-    "@adoforum/shared": "0.2.5",
+    "@elf/shared": "0.3.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },

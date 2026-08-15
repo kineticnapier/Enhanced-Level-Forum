@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "adoforum-web",
+  "name": "enhanced-level-forum-web",
   "compatibility_date": "2026-08-14",
   "assets": {
     "directory": "./dist",

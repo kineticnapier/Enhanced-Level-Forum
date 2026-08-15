@@ -1,16 +1,16 @@
 {
-  "name": "@adoforum/api",
-  "version": "0.2.5",
+  "name": "@elf/api",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev --port 8787",
+    "dev": "wrangler dev",
     "build": "tsc -p tsconfig.json --noEmit",
     "deploy": "wrangler deploy",
     "cf-typegen": "wrangler types"
   },
   "dependencies": {
-    "@adoforum/shared": "0.2.5",
+    "@elf/shared": "0.3.0",
     "hono": "^4.0.0",
     "pg": "^8.16.3"
   },

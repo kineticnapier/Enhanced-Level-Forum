@@ -1,14 +1,10 @@
 import { readFile, readdir } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import pg from 'pg'
+import { resolveDatabaseUrl } from './local-env.mjs'
 
 const { Client } = pg
-const databaseUrl = process.env.DATABASE_URL
-if (!databaseUrl) {
-  console.error('DATABASE_URL is required')
-  process.exit(1)
-}
-
+const databaseUrl = await resolveDatabaseUrl()
 const client = new Client({ connectionString: databaseUrl })
 await client.connect()
 try {

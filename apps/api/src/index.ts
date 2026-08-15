@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import type { Family, ProposalType, ReferenceStatus, UserRole } from '@adoforum/shared'
+import type { Family, ProposalType, ReferenceStatus, UserRole } from '@elf/shared'
 import type { AppBindings } from './auth'
 import { hasRole, loadUser, requireRole } from './auth'
 import { hashPassword, randomToken, sha256Hex, verifyPassword } from './crypto'
@@ -50,11 +50,11 @@ app.get('/api/health', async (c) => {
     const result = await db.query('SELECT 1 AS ok')
     return result.rows[0]?.ok === 1
   }).catch(() => false)
-  return c.json({ ok: database, database, version: '0.2.5' }, database ? 200 : 503)
+  return c.json({ ok: database, database, version: '0.3.0' }, database ? 200 : 503)
 })
 
 app.get('/api/config', (c) => c.json({
-  version: '0.2.5',
+  version: '0.3.0',
   canonicalRating: 'integer-tier',
   voteScale: 'anchor-tier + five-step lean (-2..2), evidence only',
 }))
@@ -115,7 +115,7 @@ app.post('/api/auth/login', async (c) => {
 
 app.post('/api/auth/logout', async (c) => {
   const cookie = c.req.header('Cookie') ?? ''
-  const tokenMatch = /(?:^|;\s*)adoforum_session=([^;]+)/.exec(cookie)
+  const tokenMatch = /(?:^|;\s*)elf_session=([^;]+)/.exec(cookie)
   if (tokenMatch?.[1]) {
     const token = decodeURIComponent(tokenMatch[1])
     const tokenHash = await sha256Hex(token)

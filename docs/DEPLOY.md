@@ -15,7 +15,7 @@ npm run db:migrate
 From the repository root:
 
 ```powershell
-npx wrangler hyperdrive create adoforum-db --connection-string="$env:DATABASE_URL"
+npx wrangler hyperdrive create enhanced-level-forum-db --connection-string="$env:DATABASE_URL"
 ```
 
 Copy the returned Hyperdrive ID into `apps/api/wrangler.jsonc` under the `HYPERDRIVE` binding.
@@ -68,9 +68,9 @@ Each deployment works initially on its `workers.dev` address.
 
 For production, attach custom domains such as:
 
-- `forum.example.com` -> `adoforum-web`
-- `admin.example.com` -> `adoforum-admin`
-- `api.example.com` -> `adoforum-api`
+- `forum.example.com` -> `enhanced-level-forum-web`
+- `admin.example.com` -> `enhanced-level-forum-admin`
+- `api.example.com` -> `enhanced-level-forum-api`
 
 You can add them in Cloudflare Dashboard or add Wrangler `routes` with `custom_domain: true`.
 
@@ -80,10 +80,6 @@ Protect `admin.example.com` with Cloudflare Access if desired. Keep backend role
 
 ## Local Hyperdrive
 
-`apps/api/wrangler.jsonc` includes a `localConnectionString`. You can instead remove it and set:
+Local development does not commit a database password in `wrangler.jsonc`. Run `npm run setup:local` once, then use `npm run dev:api`. The root wrapper reads `.env` and sets `CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE` automatically.
 
-```powershell
-$env:CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE="postgres://postgres:postgres@127.0.0.1:5432/adoforum"
-```
-
-then run `npm run dev:api`.
+You may still override that environment variable explicitly when testing a different local database.
