@@ -95,9 +95,11 @@ npm run dev:admin
 
 Open:
 
-- public: `http://127.0.0.1:5173`
-- admin: `http://127.0.0.1:5174`
-- API: `http://127.0.0.1:8787/api/health`
+- public: `http://localhost:5173`
+- admin: `http://localhost:5174`
+- API: `http://localhost:8787/api/health`
+
+Use `localhost` consistently for the browser-facing services. Do not mix it with `127.0.0.1`, because the local session cookie uses `SameSite=Lax` and mixing hosts makes authenticated browser requests cross-site.
 
 The bootstrap admin is created only when a login exactly matches `BOOTSTRAP_ADMIN_EMAIL` / `BOOTSTRAP_ADMIN_PASSWORD` and the account does not already exist. Remove/change the bootstrap secret after the real admin exists.
 
@@ -114,17 +116,14 @@ The container used to generate this artifact has no npm network access, so the i
 
 See `docs/DEPLOY.md` for Hyperdrive, secrets, CORS origins and custom domains.
 
-## v0.2.3 build fix
+## v0.2.3 API TypeScript fixes
 
 - Fixed TypeScript 5.8 WebCrypto `BufferSource` typing when verifying PBKDF2 passwords.
 - Fixed the login JSON fallback type so `email` / `password` remain known after `.catch()`.
 
-
-
-## v0.2.3 build fix
+## v0.2.3 Vite typing fix
 
 Added explicit `ImportMetaEnv` declarations to both Vite frontends so `import.meta.env.VITE_API_URL` type-checks under strict TypeScript builds. The same fix is applied to the public web app and admin app to avoid the next workspace failing for the same reason.
-
 
 ## v0.2.5 migration fix
 
