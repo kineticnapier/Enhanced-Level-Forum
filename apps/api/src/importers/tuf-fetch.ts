@@ -34,10 +34,6 @@ function sameIds(a: string[], b: string[]): boolean {
   return a.length === b.length && a.every((id, index) => id === b[index])
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
 async function fetchJson(url: URL): Promise<any> {
   const response = await fetch(url, { headers: { Accept: 'application/json' } })
   if (!response.ok) {
@@ -80,7 +76,7 @@ async function fetchLevelPass(apiBase: string): Promise<LevelPass> {
       // Malformed source ids are still preserved for the normal importer to
       // diagnose. They get a positional consistency key instead of being
       // silently discarded during the network snapshot phase.
-      const key = id ?? `!invalid:${offset + ids.length}`
+      const key = id ?? `!invalid:${ids.length}`
       ids.push(key)
       if (id) {
         if (seen.has(id)) duplicateIds.add(id)
@@ -156,8 +152,6 @@ export async function fetchConsistentTufSnapshot(
       previous = null
       console.warn(`[TUF import] level scan ${attempt}/${MAX_ATTEMPTS} failed: ${lastProblem}`)
     }
-
-    if (attempt < MAX_ATTEMPTS) await sleep(250 * attempt)
   }
 
   throw new Error(
