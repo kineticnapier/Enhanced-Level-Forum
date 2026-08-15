@@ -25,6 +25,18 @@ if (!api.includes("version: '0.3.0'")) throw new Error('API version mismatch')
 const entry = await readFile(new URL('../apps/api/src/entry.ts', import.meta.url), 'utf8')
 if (!entry.includes("'/api/admin/imports/tuf'")) throw new Error('TUF import route missing')
 if (!entry.includes("'/api/admin/imports/tuf/issues'")) throw new Error('TUF import issues route missing')
+if (!entry.includes('fetchConsistentTufSnapshot')) throw new Error('TUF import route is not using consistent pagination fetch')
+
+const tufFetcher = await readFile(new URL('../apps/api/src/importers/tuf-fetch.ts', import.meta.url), 'utf8')
+for (const invariant of ['RECENT_ASC', 'REQUIRED_STABLE_PASSES = 2', 'MAX_ATTEMPTS = 4', 'duplicateIds', 'sameIds(current.ids, previous.ids)']) {
+  if (!tufFetcher.includes(invariant)) throw new Error(`TUF pagination consistency invariant missing: ${invariant}`)
+}
+if (!tufFetcher.includes('pass.levels.length !== pass.total')) {
+  throw new Error('TUF pagination must verify fetched count against source total')
+}
+if (!tufFetcher.includes('pass.pageTotals.every')) {
+  throw new Error('TUF pagination must reject a total that changes mid-scan')
+}
 
 const tufImporter = await readFile(new URL('../apps/api/src/importers/tuf.ts', import.meta.url), 'utf8')
 for (const invariant of ['external_rating_observations', 'external_reference_observations', 'external_level_ids', 'TUF_IMPORT']) {
@@ -56,4 +68,4 @@ console.log('STATIC SMOKE PASSED')
 console.log(`migrations: ${migrationFiles.join(', ')}`)
 console.log('canonical difficulty: integer P/G/U tier')
 console.log('human vote evidence: 5-step lean (-2..2), not a 100-step official scale')
-console.log('TUF import: external observations only; canonical/reference tables isolated')
+console.log('TUF import: stable two-pass RECENT_ASC pagination; external observations only')
