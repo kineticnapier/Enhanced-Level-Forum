@@ -241,6 +241,14 @@ async function insertReferenceObservations(db: DbClient, snapshotId: string, row
 
 async function insertIssues(db: DbClient, snapshotId: string, issues: ImportIssue[]) {
   for (const batch of chunk(issues)) {
+    const rows = batch.map((issue) => ({
+      severity: issue.severity,
+      kind: issue.kind,
+      external_id: issue.externalId,
+      linked_level_id: issue.linkedLevelId,
+      linked_level_version_id: issue.linkedLevelVersionId,
+      details: issue.details,
+    }))
     await db.query(
       `INSERT INTO import_issues(
          snapshot_id,source,severity,kind,external_id,linked_level_id,linked_level_version_id,details
@@ -250,7 +258,7 @@ async function insertIssues(db: DbClient, snapshotId: string, issues: ImportIssu
          severity text, kind text, external_id text,
          linked_level_id uuid, linked_level_version_id uuid, details jsonb
        )`,
-      [snapshotId, JSON.stringify(batch)],
+      [snapshotId, JSON.stringify(rows)],
     )
   }
 }
@@ -440,7 +448,10 @@ export async function importTufSnapshot(
           issues.push({ severity: 'WARNING', kind: 'INVALID_REFERENCE_DIFFICULTY', externalId: id, linkedLevelId: link?.levelId ?? null, linkedLevelVersionId: link?.levelVersionId ?? null, details: { difficulty: groupDifficulty, referenceType } })
         }
         if (referenceType === 'UNKNOWN') {
-          issues.push({ severity: 'WARNING', kind: 'MISSING_REFERENCE_TYPE', externalId: id, linkedLevelId: link?.levelId ?? null, linkedLevelVersionId: link?.levelVersionId ?? null, details: { difficulty: groupDifficulty } })
+          // TUF's reference endpoint intentionally serializes a missing DB type as
+          // an empty string. Preserve it as UNKNOWN, but treat that source-data
+          // absence as informational rather than an import-quality warning.
+          issues.push({ severity: 'INFO', kind: 'MISSING_REFERENCE_TYPE', externalId: id, linkedLevelId: link?.levelId ?? null, linkedLevelVersionId: link?.levelVersionId ?? null, details: { difficulty: groupDifficulty } })
         }
 
         referenceRows.push({
