@@ -33,6 +33,12 @@ for (const invariant of ['external_rating_observations', 'external_reference_obs
 if (tufImporter.includes('canonical_ratings') || tufImporter.includes('difficulty_references')) {
   throw new Error('TUF importer must not write/read canonical ELF rating/reference tables')
 }
+if (!tufImporter.includes('external_id: issue.externalId')) {
+  throw new Error('TUF import issues must preserve external source IDs')
+}
+if (!tufImporter.includes("severity: 'INFO', kind: 'MISSING_REFERENCE_TYPE'")) {
+  throw new Error('missing TUF reference types should be informational source metadata')
+}
 
 const wrangler = await readFile(new URL('../apps/api/wrangler.jsonc', import.meta.url), 'utf8')
 if (!wrangler.includes('"main": "src/entry.ts"')) throw new Error('Wrangler is not using importer-aware entrypoint')
