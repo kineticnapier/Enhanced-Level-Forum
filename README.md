@@ -1,6 +1,8 @@
-# AdoForum Cloudflare v0.2.5
+# Enhanced Level Forum (ELF)
 
-Cloudflare-oriented rewrite of the AdoForum MVP.
+Current development version: **v0.2.5**
+
+Enhanced Level Forum is an ADOFAI difficulty forum/database built around versioned level data, auditable rating history, rerating proposals, and non-sacred References.
 
 The application is split into three independently deployable pieces:
 
@@ -13,11 +15,11 @@ api.example.com    -> apps/api    Hono Cloudflare Worker
                                Hyperdrive -> PostgreSQL
 ```
 
-The old single Node server is no longer the production architecture. PostgreSQL is the source of truth; frontend deployments are disposable static builds; the API is the only writer.
+PostgreSQL is the source of truth. Frontend deployments are disposable static builds; the API is the only writer.
 
-## Rating model in this version
+## Rating model
 
-AdoForum deliberately does **not** publish a 100-step `G9 Mid-High` style official scale.
+ELF deliberately does **not** publish a 100-step `G9 Mid-High` style official scale.
 
 - Canonical rating: integer `P/G/U` tier such as `G9`.
 - Human evidence: integer anchor tier + a five-step lean `-2..2`.
@@ -56,40 +58,112 @@ docs/
   SECURITY.md
 ```
 
-## Local development
+## Fresh local setup
+
+The following example is for Windows / PowerShell.
 
 Requirements:
 
 - Node.js 20+ (22 recommended)
-- PostgreSQL
-- a Cloudflare account is not required for local UI/API development
+- PostgreSQL, including the `psql` command-line tools
+- Git
+- A Cloudflare account is **not** required for local UI/API development
 
-Install dependencies:
+### 1. Clone and install dependencies
 
 ```powershell
+git clone https://github.com/kineticnapier/Enhanced-Level-Forum.git
+cd Enhanced-Level-Forum
 npm install
 ```
 
-Create a local database and apply migrations:
+### 2. Verify PostgreSQL
 
 ```powershell
-$env:DATABASE_URL="postgres://postgres:postgres@127.0.0.1:5432/adoforum"
+psql --version
+```
+
+If `psql` is not found, add the PostgreSQL `bin` directory to `PATH`. A typical installation path is:
+
+```text
+C:\Program Files\PostgreSQL\18\bin
+```
+
+The version number may differ.
+
+### 3. Create the local database
+
+A fresh PostgreSQL installation does not contain the ELF database. Create it first:
+
+```powershell
+psql -U postgres -d postgres -c 'CREATE DATABASE adoforum;'
+```
+
+`psql` will ask for the password of the PostgreSQL `postgres` user.
+
+The database is currently named `adoforum` internally for compatibility with the existing development configuration. It is only an internal database name and does not affect the ELF project name.
+
+If the database already exists, skip this command.
+
+### 4. Apply database migrations
+
+Set the connection string for the migration script. Replace `<PASSWORD>` with the password chosen when PostgreSQL was installed:
+
+```powershell
+$env:DATABASE_URL="postgres://postgres:<PASSWORD>@127.0.0.1:5432/adoforum"
 npm run db:migrate
 ```
 
-Copy the API dev secrets file:
+A successful first migration should end with:
+
+```text
+apply 001_initial.sql
+apply 002_seed_tags.sql
+migrations complete
+```
+
+Later runs are safe; already-applied migrations are skipped.
+
+### 5. Configure the API development secrets
 
 ```powershell
 Copy-Item apps/api/.dev.vars.example apps/api/.dev.vars
+Get-Content apps/api/.dev.vars
 ```
 
-The default Wrangler config points its local Hyperdrive connection at the same local PostgreSQL database.
+`.dev.vars` is ignored by Git and must not be committed.
 
-Run three terminals:
+The bootstrap admin is created only when the first login exactly matches `BOOTSTRAP_ADMIN_EMAIL` and `BOOTSTRAP_ADMIN_PASSWORD` from this file. Once a real admin account exists, change or remove the bootstrap credentials before deployment.
+
+### 6. Configure the Worker's local database connection
+
+The checked-in Wrangler config assumes the development connection string:
+
+```text
+postgres://postgres:postgres@127.0.0.1:5432/adoforum
+```
+
+If your PostgreSQL password is not `postgres`, override it for the current PowerShell session instead of committing your password to `wrangler.jsonc`:
+
+```powershell
+$env:CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE="postgres://postgres:<PASSWORD>@127.0.0.1:5432/adoforum"
+```
+
+Use the same database credentials for `DATABASE_URL` and the Hyperdrive local connection string.
+
+### 7. Run the three development servers
+
+Open three terminals in the repository root:
 
 ```powershell
 npm run dev:api
+```
+
+```powershell
 npm run dev:web
+```
+
+```powershell
 npm run dev:admin
 ```
 
@@ -97,11 +171,28 @@ Open:
 
 - public: `http://localhost:5173`
 - admin: `http://localhost:5174`
-- API: `http://localhost:8787/api/health`
+- API health: `http://localhost:8787/api/health`
 
-Use `localhost` consistently for the browser-facing services. Do not mix it with `127.0.0.1`, because the local session cookie uses `SameSite=Lax` and mixing hosts makes authenticated browser requests cross-site.
+A healthy local API/database connection returns approximately:
 
-The bootstrap admin is created only when a login exactly matches `BOOTSTRAP_ADMIN_EMAIL` / `BOOTSTRAP_ADMIN_PASSWORD` and the account does not already exist. Remove/change the bootstrap secret after the real admin exists.
+```json
+{"ok":true,"database":true,"version":"0.2.5"}
+```
+
+Use `localhost` consistently for browser-facing services. Do not mix it with `127.0.0.1`, because the local session cookie uses `SameSite=Lax` and mixing hosts makes authenticated browser requests cross-site.
+
+## Existing checkout: update and migrate
+
+After pulling new commits:
+
+```powershell
+git pull
+npm install
+$env:DATABASE_URL="postgres://postgres:<PASSWORD>@127.0.0.1:5432/adoforum"
+npm run db:migrate
+```
+
+Then restart the API/web/admin development servers.
 
 ## Build
 
@@ -110,31 +201,22 @@ npm run build
 npm run smoke
 ```
 
-The container used to generate this artifact has no npm network access, so the included source was syntax/static-smoke checked here; run `npm install && npm run build` on a networked development machine before deployment.
-
 ## Production deployment
 
 See `docs/DEPLOY.md` for Hyperdrive, secrets, CORS origins and custom domains.
 
-## v0.2.3 API TypeScript fixes
+## Development notes
 
-- Fixed TypeScript 5.8 WebCrypto `BufferSource` typing when verifying PBKDF2 passwords.
-- Fixed the login JSON fallback type so `email` / `password` remain known after `.catch()`.
+### PostgreSQL `REFERENCES` migration fix
 
-## v0.2.3 Vite typing fix
+PostgreSQL reserves `REFERENCES` as SQL syntax. An early migration used `references` as a table name, which failed with PostgreSQL error `42601`. The physical table is now named `difficulty_references`; public API routes remain `/api/references`.
 
-Added explicit `ImportMetaEnv` declarations to both Vite frontends so `import.meta.env.VITE_API_URL` type-checks under strict TypeScript builds. The same fix is applied to the public web app and admin app to avoid the next workspace failing for the same reason.
+### Local authentication host rule
 
-## v0.2.5 migration fix
-
-PostgreSQL reserves `REFERENCES` as SQL syntax. The initial migration previously used `references` as a table name, which fails with PostgreSQL error `42601`. The physical table is now named `difficulty_references`; public API routes remain `/api/references`. If v0.2.3 failed while applying `001_initial.sql`, the migration transaction was rolled back, so rerun `npm run db:migrate` with v0.2.5.
-
-## Development auth host rule (v0.2.5)
-
-For cookie authentication in local development, use `localhost` consistently for all three services:
+For cookie authentication in local development, use `localhost` consistently for all three browser-facing services:
 
 - Public: `http://localhost:5173`
 - Admin: `http://localhost:5174`
 - API: `http://localhost:8787`
 
-Do not mix `localhost` and `127.0.0.1`. The session cookie uses `SameSite=Lax`; mixing those hosts makes browser fetches cross-site, so login can appear successful while subsequent authenticated API calls return `401 Unauthorized`.
+Do not mix `localhost` and `127.0.0.1`. Login can otherwise appear successful while subsequent authenticated API calls return `401 Unauthorized`.
