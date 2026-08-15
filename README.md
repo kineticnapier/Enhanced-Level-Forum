@@ -122,6 +122,44 @@ Password: change-me-immediately
 
 The bootstrap account is created only when a login exactly matches `BOOTSTRAP_ADMIN_EMAIL` / `BOOTSTRAP_ADMIN_PASSWORD` and that email is not already present in the database. Change/remove the bootstrap credentials before a public deployment.
 
+## TUF importer
+
+The TUF importer reads the public TUF v2 level search and Reference endpoints and stores the result as **external observations**. It does not create ELF Levels and it never writes ELF `canonical_ratings` or `difficulty_references`.
+
+After applying migrations and starting the API:
+
+```powershell
+# terminal 1
+npm run dev:api
+
+# terminal 2
+npm run import:tuf
+```
+
+For the default local bootstrap account, `import:tuf` reads the credentials from `apps/api/.dev.vars`. If the local admin uses different credentials:
+
+```powershell
+$env:ELF_ADMIN_EMAIL="your-admin@example.com"
+$env:ELF_ADMIN_PASSWORD="your-password"
+npm run import:tuf
+```
+
+The importer stores:
+
+- the complete raw response in `import_snapshots`;
+- one normalized row per external level in `external_level_observations`;
+- TUF difficulty as `external_rating_observations`;
+- TUF References as `external_reference_observations`;
+- malformed/ambiguous/conflicting data in `import_issues`.
+
+A TUF ID is linked to an existing ELF Level only when a mapping already exists, or when an incoming valid SHA-256 exactly matches an existing ELF `LevelVersion`. Special/non-PGU labels such as `Impossible` remain external labels and are not forced into P/G/U.
+
+For deterministic/offline testing, pass a JSON fixture containing `{ "levels": [...], "references": [...] }`:
+
+```powershell
+npm run import:tuf -- .\path\to\tuf-fixture.json
+```
+
 ## Tests
 
 Static/build checks:
@@ -140,7 +178,7 @@ npm run dev:api
 npm run test:e2e
 ```
 
-The E2E test creates a unique temporary ADMIN user and level, then verifies:
+The E2E test verifies the canonical workflow and the external-import isolation boundary:
 
 ```text
 login
@@ -149,12 +187,15 @@ login
  -> add ACTIVE G9 reference
  -> rerate to G10
  -> reference becomes NEEDS_REVIEW
- -> create proposal
- -> approve proposal
+ -> create/approve proposal
  -> audit entry exists
+ -> import synthetic TUF snapshot
+ -> exact SHA auto-links the external ID
+ -> special difficulty remains external
+ -> canonical_ratings / difficulty_references stay unchanged
 ```
 
-The temporary level/user and their audit rows are removed afterward, including when the test fails after creation.
+Temporary E2E rows are removed afterward, including the imported snapshot and its cascading observations.
 
 ## Existing checkout
 
@@ -182,6 +223,7 @@ scripts/
   setup-local.mjs
   apply-migrations.mjs
   dev-api.mjs
+  import-tuf.mjs
   smoke.mjs
   e2e-smoke.mjs
 docs/
