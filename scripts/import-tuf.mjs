@@ -47,7 +47,8 @@ if (fixturePath) {
   requestBody = { rawData: JSON.parse(await readFile(absolute, 'utf8')), sourceVersion: `fixture:${fixturePath}` }
   console.log(`Importing TUF fixture: ${absolute}`)
 } else {
-  console.log('Fetching the current TUF v2 levels and references through the ELF API...')
+  console.log('Fetching the current TUF v2 data through the ELF API...')
+  console.log('Level pagination is accepted only after two consecutive stable ID scans.')
 }
 
 const imported = await fetch(`${apiBase}/admin/imports/tuf`, {
