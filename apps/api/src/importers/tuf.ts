@@ -2,7 +2,6 @@ import type { DbClient } from '../db'
 import { inTransaction } from '../db'
 import { audit } from '../services'
 
-const SOURCE = 'TUF'
 const DEFAULT_API_BASE = 'https://api.tuforums.com/v2/database'
 const PAGE_LIMIT = 100
 const INSERT_BATCH = 250
@@ -61,7 +60,9 @@ function text(value: unknown): string | null {
 
 function externalId(value: unknown): string | null {
   if (typeof value === 'number' && Number.isInteger(value) && value > 0) return String(value)
-  if (typeof value === 'string' && /^\d+$/.test(value.trim())) return String(Number(value.trim()))
+  if (typeof value === 'string' && /^\d+$/.test(value.trim())) {
+    return value.trim().replace(/^0+(?=\d)/, '')
+  }
   return null
 }
 
@@ -276,14 +277,15 @@ export async function importTufSnapshot(
     const snapshot = snapshotResult.rows[0]
 
     const mappingResult = await db.query(
-      `SELECT e.external_id,e.level_id,l.current_version_id
+      `SELECT e.external_id,e.level_id
        FROM external_level_ids e
-       JOIN levels l ON l.id=e.level_id
        WHERE e.source='TUF'`,
     )
     const links = new Map<string, Link>()
     for (const row of mappingResult.rows) {
-      links.set(String(row.external_id), { levelId: row.level_id, levelVersionId: row.current_version_id ?? null })
+      // An external source ID identifies the ELF Level, not a particular
+      // LevelVersion. Only an exact SHA-256 match may establish version linkage.
+      links.set(String(row.external_id), { levelId: row.level_id, levelVersionId: null })
     }
 
     const normalized = new Map<string, ReturnType<typeof normalizedLevel>>()
@@ -393,7 +395,7 @@ export async function importTufSnapshot(
           family: parsed?.family ?? null,
           tier: parsed?.tier ?? null,
           label: item.difficultyLabel,
-          raw_data: { difficulty: item.difficultyLabel },
+          raw_data: item.rawData,
         })
       } else {
         issues.push({ severity: 'WARNING', kind: 'MISSING_DIFFICULTY', externalId: item.externalId, linkedLevelId: link?.levelId ?? null, linkedLevelVersionId: link?.levelVersionId ?? null, details: {} })
