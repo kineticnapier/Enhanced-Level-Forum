@@ -3,9 +3,11 @@ import { requireRole } from './auth'
 import { withDb } from './db'
 import { fetchTufSnapshot, importTufSnapshot, type TufRawSnapshot } from './importers/tuf'
 
+type TufImportBody = { rawData?: TufRawSnapshot; sourceVersion?: string | null }
+
 app.post('/api/admin/imports/tuf', requireRole('REFERENCE_MANAGER'), async (c) => {
   const user = c.get('user')!
-  const body = await c.req.json<{ rawData?: TufRawSnapshot; sourceVersion?: string | null }>().catch(() => ({}))
+  const body = await c.req.json<TufImportBody>().catch((): TufImportBody => ({}))
 
   const rawData = body.rawData ?? await fetchTufSnapshot()
   const result = await withDb(c.env, (db) => importTufSnapshot(db, {
