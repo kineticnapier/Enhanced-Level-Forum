@@ -1,0 +1,23 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "adoforum-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-14",
+  "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "ENVIRONMENT": "development",
+    "WEB_ORIGIN": "http://localhost:5173",
+    "ADMIN_ORIGIN": "http://localhost:5174",
+    "COOKIE_DOMAIN": ""
+  },
+  "hyperdrive": [
+    {
+      "binding": "HYPERDRIVE",
+      "id": "REPLACE_WITH_HYPERDRIVE_ID",
+      "localConnectionString": "postgres://postgres:postgres@127.0.0.1:5432/adoforum"
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}

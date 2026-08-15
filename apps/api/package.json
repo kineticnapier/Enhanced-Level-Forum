@@ -1,0 +1,22 @@
+{
+  "name": "@adoforum/api",
+  "version": "0.2.5",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --port 8787",
+    "build": "tsc -p tsconfig.json --noEmit",
+    "deploy": "wrangler deploy",
+    "cf-typegen": "wrangler types"
+  },
+  "dependencies": {
+    "@adoforum/shared": "0.2.5",
+    "hono": "^4.0.0",
+    "pg": "^8.16.3"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.15.0",
+    "typescript": "^5.8.0",
+    "wrangler": "^4.0.0"
+  }
+}

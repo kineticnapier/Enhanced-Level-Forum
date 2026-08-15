@@ -1,0 +1,23 @@
+{
+  "name": "@adoforum/admin",
+  "version": "0.2.5",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host localhost --port 5174",
+    "build": "tsc -p tsconfig.json --noEmit && vite build",
+    "deploy": "npm run build && wrangler deploy"
+  },
+  "dependencies": {
+    "@adoforum/shared": "0.2.5",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "typescript": "^5.8.0",
+    "vite": "^7.0.0",
+    "wrangler": "^4.0.0"
+  }
+}

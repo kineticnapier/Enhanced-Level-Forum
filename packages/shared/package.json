@@ -1,0 +1,10 @@
+{
+  "name": "@adoforum/shared",
+  "version": "0.2.5",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json --noEmit"
+  }
+}

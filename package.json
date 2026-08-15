@@ -1,0 +1,30 @@
+{
+  "name": "adoforum-cloudflare",
+  "version": "0.2.5",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:api": "npm -w @adoforum/api run dev",
+    "dev:web": "npm -w @adoforum/web run dev",
+    "dev:admin": "npm -w @adoforum/admin run dev",
+    "build": "npm run build:shared && npm run build:api && npm run build:web && npm run build:admin",
+    "build:shared": "npm -w @adoforum/shared run build",
+    "build:api": "npm -w @adoforum/api run build",
+    "build:web": "npm -w @adoforum/web run build",
+    "build:admin": "npm -w @adoforum/admin run build",
+    "deploy:api": "npm -w @adoforum/api run deploy",
+    "deploy:web": "npm -w @adoforum/web run deploy",
+    "deploy:admin": "npm -w @adoforum/admin run deploy",
+    "db:migrate": "node scripts/apply-migrations.mjs",
+    "smoke": "node scripts/smoke.mjs"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.0"
+  },
+  "dependencies": {
+    "pg": "^8.16.3"
+  }
+}
