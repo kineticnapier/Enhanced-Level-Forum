@@ -22,6 +22,14 @@ type ReviewAssessment = {
   spread: number | null
 }
 
+type RatingInput = {
+  family?: unknown
+  anchorTier?: unknown
+  lean?: unknown
+  confidence?: unknown
+  comment?: unknown
+}
+
 function median(values: number[]): number {
   const sorted = [...values].sort((a, b) => a - b)
   const middle = Math.floor(sorted.length / 2)
@@ -57,6 +65,19 @@ function assessVotes(votes: VoteRow[], minVotes: number, maxVotes: number): Revi
   }
 
   return { status: 'OPEN', reason: 'DISAGREEMENT_NEEDS_ONE_MORE', voteCount, candidate, spread }
+}
+
+function parseRatingInput(body: RatingInput) {
+  const family = normalizeFamily(body.family)
+  const anchorTier = normalizeTier(body.anchorTier)
+  const lean = normalizeLean(body.lean)
+  const confidence = Number(body.confidence ?? 3)
+  const comment = typeof body.comment === 'string' ? body.comment.trim() || null : null
+  if (!family || anchorTier === null || lean === null || !Number.isInteger(confidence) || confidence < 1 || confidence > 5) {
+    return null
+  }
+  if (comment && comment.length > 4000) return null
+  return { family, anchorTier, lean, confidence, comment }
 }
 
 async function assessVersion(db: DbClient, levelVersionId: string, minVotes: number, maxVotes: number): Promise<ReviewAssessment> {
@@ -98,6 +119,9 @@ function queueRow(row: any, assessment: ReviewAssessment | null) {
     levelId: row.level_id,
     levelVersionId: row.level_version_id,
     versionLabel: row.version_label,
+    sha256: row.sha256 ?? null,
+    downloadUrl: row.download_url ?? null,
+    videoUrl: row.video_url ?? null,
     song: row.song,
     artist: row.artist,
     creator: row.creator,
@@ -124,7 +148,8 @@ async function listQueue(db: DbClient, userId: string, includeReviewReady: boole
   const statuses = includeReviewReady ? ['OPEN', 'REVIEW_READY'] : ['OPEN']
   const result = await db.query(
     `SELECT q.id,q.level_version_id,q.status,q.min_votes,q.max_votes,q.priority,q.opened_at,q.review_ready_at,
-            lv.level_id,lv.label AS version_label,l.song,l.artist,l.creator,l.effecter,
+            lv.level_id,lv.label AS version_label,lv.sha256,lv.download_url,lv.video_url,
+            l.song,l.artist,l.creator,l.effecter,
             (SELECT count(*)::int FROM rating_votes rv WHERE rv.level_version_id=q.level_version_id) AS vote_count,
             (SELECT count(*)::int FROM rating_queue_claims qc WHERE qc.queue_item_id=q.id AND qc.status='ACTIVE') AS active_claim_count,
             mine.status AS my_claim_status,
@@ -162,6 +187,17 @@ export function registerRatingQueueRoutes(app: Hono<AppBindings>) {
       },
       activeClaims,
     })
+  })
+
+  // Rating work has its own task detail endpoint. The public Level detail API is
+  // intentionally not needed to render the rating form.
+  app.get('/api/rating-queue/:id', loadUser, requireRole('RATER'), async (c) => {
+    const user = c.get('user')!
+    const includeReviewReady = hasRole(user, 'MODERATOR')
+    const items = await withDb(c.env, (db) => listQueue(db, user.id, includeReviewReady))
+    const item = items.find((row) => row.id === c.req.param('id')) ?? null
+    if (!item) return c.json({ error: 'Rating task not found or no longer available' }, 404)
+    return c.json({ item })
   })
 
   app.post('/api/rating-queue/:id/claim', loadUser, requireRole('RATER'), async (c) => {
@@ -248,20 +284,76 @@ export function registerRatingQueueRoutes(app: Hono<AppBindings>) {
     return c.json({ ok: true })
   })
 
-  // Registered before the legacy core vote route. Queue-aware writes still
-  // preserve the old endpoint, but one person now has one current vote per Version.
+  // New RATER UI writes through the queue task, not the Level display API.
+  app.post('/api/rating-queue/:id/rating', loadUser, requireRole('RATER'), async (c) => {
+    const user = c.get('user')!
+    const body: RatingInput = await c.req.json<RatingInput>().catch((): RatingInput => ({}))
+    const rating = parseRatingInput(body)
+    if (!rating) return c.json({ error: 'Invalid rating. family, anchorTier, lean(-2..2), confidence(1..5) are required; comment max 4000 chars.' }, 400)
+
+    const outcome = await withDb(c.env, async (db) => inTransaction(db, async () => {
+      const itemResult = await db.query(
+        `SELECT q.id,q.level_version_id,q.status
+         FROM rating_queue_items q
+         WHERE q.id=$1 FOR UPDATE`,
+        [c.req.param('id')],
+      )
+      if (!itemResult.rowCount) return { kind: 'missing' as const }
+      const item = itemResult.rows[0]
+      if (item.status !== 'OPEN') return { kind: 'not_open' as const }
+
+      const existingVote = await db.query(
+        `SELECT id FROM rating_votes WHERE level_version_id=$1 AND user_id=$2`,
+        [item.level_version_id, user.id],
+      )
+      if (existingVote.rowCount) return { kind: 'already_voted' as const }
+
+      const claim = await db.query(
+        `SELECT status FROM rating_queue_claims WHERE queue_item_id=$1 AND user_id=$2 FOR UPDATE`,
+        [item.id, user.id],
+      )
+      if (claim.rows[0]?.status !== 'ACTIVE') return { kind: 'claim_required' as const }
+
+      const voteResult = await db.query(
+        `INSERT INTO rating_votes(level_version_id,user_id,family,anchor_tier,lean,confidence,comment)
+         VALUES ($1,$2,$3,$4,$5,$6,$7)
+         RETURNING *`,
+        [item.level_version_id, user.id, rating.family, rating.anchorTier, rating.lean, rating.confidence, rating.comment],
+      )
+
+      await db.query(
+        `UPDATE rating_queue_claims
+         SET status='SUBMITTED',completed_at=now(),updated_at=now()
+         WHERE queue_item_id=$1 AND user_id=$2 AND status='ACTIVE'`,
+        [item.id, user.id],
+      )
+      const assessment = await refreshQueueItem(db, item.id)
+      await audit(db, user.id, 'RATING_VOTE', 'level_version', item.level_version_id, {
+        family: rating.family,
+        anchorTier: rating.anchorTier,
+        lean: rating.lean,
+        confidence: rating.confidence,
+        queueItemId: item.id,
+        queueStatus: assessment?.status ?? null,
+        source: 'RATING_TASK',
+      })
+      return { kind: 'ok' as const, vote: voteResult.rows[0], assessment }
+    }))
+
+    if (outcome.kind === 'missing') return c.json({ error: 'Rating task not found' }, 404)
+    if (outcome.kind === 'not_open') return c.json({ error: 'This rating task is no longer open' }, 409)
+    if (outcome.kind === 'already_voted') return c.json({ error: 'You already submitted a rating for this Version' }, 409)
+    if (outcome.kind === 'claim_required') return c.json({ error: 'Claim this rating task before submitting a rating' }, 409)
+    return c.json({ vote: outcome.vote, queue: outcome.assessment })
+  })
+
+  // Compatibility endpoint for older clients. New UI code must not use this;
+  // rating work is owned by /api/rating-queue/:id/rating.
   app.post('/api/levels/:id/votes', loadUser, requireRole('RATER'), async (c) => {
     const user = c.get('user')!
-    const body = await c.req.json<any>().catch(() => ({}))
-    const family = normalizeFamily(body.family)
-    const anchorTier = normalizeTier(body.anchorTier)
-    const lean = normalizeLean(body.lean)
-    const confidence = Number(body.confidence ?? 3)
-    const comment = typeof body.comment === 'string' ? body.comment.trim() || null : null
-    if (!family || anchorTier === null || lean === null || !Number.isInteger(confidence) || confidence < 1 || confidence > 5) {
-      return c.json({ error: 'Invalid vote. family, anchorTier, lean(-2..2), confidence(1..5) are required.' }, 400)
-    }
-    if (comment && comment.length > 4000) return c.json({ error: 'Comment must be at most 4000 characters' }, 400)
+    const body: RatingInput = await c.req.json<RatingInput>().catch((): RatingInput => ({}))
+    const rating = parseRatingInput(body)
+    if (!rating) return c.json({ error: 'Invalid vote. family, anchorTier, lean(-2..2), confidence(1..5) are required.' }, 400)
 
     const outcome = await withDb(c.env, async (db) => inTransaction(db, async () => {
       const versionResult = await db.query(
@@ -297,7 +389,7 @@ export function registerRatingQueueRoutes(app: Hono<AppBindings>) {
          DO UPDATE SET family=EXCLUDED.family,anchor_tier=EXCLUDED.anchor_tier,lean=EXCLUDED.lean,
                        confidence=EXCLUDED.confidence,comment=EXCLUDED.comment,updated_at=now()
          RETURNING *`,
-        [versionId, user.id, family, anchorTier, lean, confidence, comment],
+        [versionId, user.id, rating.family, rating.anchorTier, rating.lean, rating.confidence, rating.comment],
       )
 
       let assessment: ReviewAssessment | null = null
@@ -312,12 +404,13 @@ export function registerRatingQueueRoutes(app: Hono<AppBindings>) {
       }
 
       await audit(db, user.id, 'RATING_VOTE', 'level_version', versionId, {
-        family,
-        anchorTier,
-        lean,
-        confidence,
+        family: rating.family,
+        anchorTier: rating.anchorTier,
+        lean: rating.lean,
+        confidence: rating.confidence,
         queueItemId: queueItem?.id ?? null,
         queueStatus: assessment?.status ?? null,
+        source: 'LEVEL_COMPAT',
       })
       return { kind: 'ok' as const, vote: voteResult.rows[0], assessment }
     }))
