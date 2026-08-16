@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react'
 import type { Family, RatingLean, RatingQueueItem, SessionUser } from '@elf/shared'
 import { api } from './api'
 import { useI18n } from './i18n'
+import { RatingGuidePage } from './RatingGuide'
 import './rating-queue.css'
 
 type QueueResponse = {
@@ -19,13 +20,14 @@ function isStaff(user: SessionUser | null) {
 }
 
 function taskIdFromHash() {
-  const raw = (location.hash || '#/rating-queue').slice(1).split('?')[0] ?? ''
+  const raw = (location.hash || '#/rating-queue').slice(1).split('?')[0]
   const parts = raw.split('/').filter(Boolean)
   return parts[0] === 'rating-queue' && parts[1] ? parts[1] : null
 }
 
 export function RatingQueuePage({ user }: { user: SessionUser | null }) {
   const taskId = taskIdFromHash()
+  if (taskId === 'guide') return <RatingGuidePage />
   if (taskId) return <RatingTaskPage user={user} id={taskId} />
   return <RatingQueueList user={user} />
 }
@@ -51,6 +53,7 @@ function RatingQueueList({ user }: { user: SessionUser | null }) {
     rate: '査定画面を開く',
     detail: '譜面を見る',
     reviewDetail: '査定内容を確認',
+    guide: '査定ガイド',
     progress: (item: RatingQueueItem) => `${item.voteCount}/${item.minVotes} 票`,
     capacity: (item: RatingQueueItem) => `担当中 ${item.activeClaimCount} · 最大 ${item.maxVotes} 票`,
     candidate: '候補',
@@ -78,6 +81,7 @@ function RatingQueueList({ user }: { user: SessionUser | null }) {
     rate: 'Open rating task',
     detail: 'View level',
     reviewDetail: 'Inspect rating task',
+    guide: 'Rating guide',
     progress: (item: RatingQueueItem) => `${item.voteCount}/${item.minVotes} votes`,
     capacity: (item: RatingQueueItem) => `${item.activeClaimCount} claimed · max ${item.maxVotes} votes`,
     candidate: 'Candidate',
@@ -106,8 +110,8 @@ function RatingQueueList({ user }: { user: SessionUser | null }) {
   const open = useMemo(() => data.items.filter((item) => item.status === 'OPEN' && item.myClaimStatus !== 'ACTIVE' && !item.myVoteSubmitted), [data.items])
   const review = useMemo(() => data.items.filter((item) => item.status === 'REVIEW_READY'), [data.items])
 
-  if (!user) return <section><div className="panel"><h1>{copy.title}</h1><p>{copy.login}</p><a className="button" href="#/login">Login</a></div></section>
-  if (!canRate(user)) return <section><div className="panel"><h1>{copy.title}</h1><p>{copy.denied}</p></div></section>
+  if (!user) return <section><div className="panel"><h1>{copy.title}</h1><p>{copy.login}</p><div className="rating-login-actions"><a className="button" href="#/login">Login</a><a className="button secondary" href="#/rating-queue/guide">{copy.guide}</a></div></div></section>
+  if (!canRate(user)) return <section><div className="panel"><h1>{copy.title}</h1><p>{copy.denied}</p><a className="button secondary" href="#/rating-queue/guide">{copy.guide}</a></div></section>
 
   const mutate = async (item: RatingQueueItem, action: 'claim' | 'release') => {
     setBusy(item.id); setError('')
@@ -150,7 +154,7 @@ function RatingQueueList({ user }: { user: SessionUser | null }) {
   </article>
 
   return <section>
-    <div className="section-head"><div><p className="eyebrow">{copy.eyebrow}</p><h1>{copy.title}</h1><p className="muted">{copy.description}</p></div></div>
+    <div className="section-head"><div><p className="eyebrow">{copy.eyebrow}</p><h1>{copy.title}</h1><p className="muted">{copy.description}</p></div><a className="button secondary" href="#/rating-queue/guide">{copy.guide}</a></div>
     <p className="note rating-queue-blind">{copy.blind}</p>
     {error && <p className="error">{error}</p>}
 
@@ -178,7 +182,7 @@ function RatingTaskPage({ user, id }: { user: SessionUser | null; id: string }) 
   const { locale, lean: leanLabel } = useI18n()
   const ja = locale === 'ja'
   const copy = ja ? {
-    title: '譜面査定', back: '← 査定キューへ', login: '査定するにはRATERでログインしてください。', denied: 'RATER以上の権限が必要です。',
+    title: '譜面査定', back: '← 査定キューへ', guide: '査定ガイド', login: '査定するにはRATERでログインしてください。', denied: 'RATER以上の権限が必要です。',
     version: '対象バージョン', sha: 'SHA-256', noSha: 'SHAなし', download: '配布ページ', video: '動画を見る', level: '譜面表示を開く',
     blind: 'この画面では、他人の査定・確定難易度・TUFなどの外部Ratingを査定前に表示しません。',
     claimNeeded: 'この譜面を担当してから査定を送信できます。', claim: 'この譜面を担当する', release: '担当を外す',
@@ -186,7 +190,7 @@ function RatingTaskPage({ user, id }: { user: SessionUser | null; id: string }) 
     family: '難易度帯', tier: '基準Tier', lean: 'Tier内の位置', confidence: '確信度', comment: 'コメント（任意）', submit: '査定を提出',
     failed: '査定タスクの読み込みに失敗しました',
   } : {
-    title: 'Rate level', back: '← Rating Queue', login: 'Log in with a RATER account to rate this level.', denied: 'This task requires RATER or higher.',
+    title: 'Rate level', back: '← Rating Queue', guide: 'Rating guide', login: 'Log in with a RATER account to rate this level.', denied: 'This task requires RATER or higher.',
     version: 'Target version', sha: 'SHA-256', noSha: 'no SHA', download: 'Download', video: 'Watch video', level: 'Open level display',
     blind: 'This task does not show peer ratings, the confirmed rating, or external/TUF rating evidence before submission.',
     claimNeeded: 'Claim this task before submitting a rating.', claim: 'Claim this task', release: 'Release claim',
@@ -214,9 +218,9 @@ function RatingTaskPage({ user, id }: { user: SessionUser | null; id: string }) 
   }
   useEffect(() => { void load() }, [id, user?.id])
 
-  if (!user) return <section><div className="panel"><h1>{copy.title}</h1><p>{copy.login}</p><a className="button" href="#/login">Login</a></div></section>
-  if (!canRate(user)) return <section><div className="panel"><h1>{copy.title}</h1><p>{copy.denied}</p></div></section>
-  if (error && !item) return <section><a className="back-link" href="#/rating-queue">{copy.back}</a><div className="panel error">{error}</div></section>
+  if (!user) return <section><div className="panel"><h1>{copy.title}</h1><p>{copy.login}</p><div className="rating-login-actions"><a className="button" href="#/login">Login</a><a className="button secondary" href="#/rating-queue/guide">{copy.guide}</a></div></div></section>
+  if (!canRate(user)) return <section><div className="panel"><h1>{copy.title}</h1><p>{copy.denied}</p><a className="button secondary" href="#/rating-queue/guide">{copy.guide}</a></div></section>
+  if (error && !item) return <section><div className="rating-task-nav"><a className="back-link" href="#/rating-queue">{copy.back}</a><a className="text-link" href="#/rating-queue/guide">{copy.guide}</a></div><div className="panel error">{error}</div></section>
   if (!item) return <section><div className="panel">Loading…</div></section>
 
   const claimed = item.myClaimStatus === 'ACTIVE'
@@ -248,7 +252,7 @@ function RatingTaskPage({ user, id }: { user: SessionUser | null; id: string }) 
   }
 
   return <section className="rating-task-page">
-    <a className="back-link" href="#/rating-queue">{copy.back}</a>
+    <div className="rating-task-nav"><a className="back-link" href="#/rating-queue">{copy.back}</a><a className="text-link" href="#/rating-queue/guide">{copy.guide}</a></div>
     <div className="rating-task-head panel">
       <div>
         <p className="eyebrow">{item.artist}</p>
@@ -263,7 +267,7 @@ function RatingTaskPage({ user, id }: { user: SessionUser | null; id: string }) 
       </div>
     </div>
 
-    <p className="note rating-queue-blind">{copy.blind}</p>
+    <p className="note rating-queue-blind">{copy.blind} <a className="text-link" href="#/rating-queue/guide">{copy.guide}</a></p>
     {error && <p className="error">{error}</p>}
 
     {!open && <div className="panel"><strong>{copy.reviewReady}</strong></div>}
