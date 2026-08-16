@@ -1,5 +1,7 @@
 # Architecture
 
+[日本語](../ARCHITECTURE.md) | **English**
+
 ## Trust boundaries
 
 ```text
