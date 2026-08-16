@@ -3,7 +3,9 @@ import { loadUser, requireRole, type AppBindings } from './auth'
 import { withDb, type DbClient } from './db'
 
 const SOURCE = 'TUF'
-const CRON_SCHEDULE = '*/30 * * * *'
+const CRON_SCHEDULE = '*/15 * * * *'
+const CRON_INTERVAL_MINUTES = 15
+const STALE_AFTER_MINUTES = 40
 
 function pgCode(error: unknown): string | null {
   if (!error || typeof error !== 'object') return null
@@ -14,10 +16,12 @@ function pgCode(error: unknown): string | null {
 function nextCronTick(now = new Date()): string {
   const next = new Date(now)
   next.setUTCSeconds(0, 0)
-  if (next.getUTCMinutes() < 30) next.setUTCMinutes(30)
-  else {
+  const nextMinute = (Math.floor(next.getUTCMinutes() / CRON_INTERVAL_MINUTES) + 1) * CRON_INTERVAL_MINUTES
+  if (nextMinute >= 60) {
     next.setUTCMinutes(0)
     next.setUTCHours(next.getUTCHours() + 1)
+  } else {
+    next.setUTCMinutes(nextMinute)
   }
   return next.toISOString()
 }
@@ -46,7 +50,7 @@ function healthOf(state: any, trackingAvailable: boolean, now = Date.now()) {
   if (!trackingAvailable) return 'MIGRATION_REQUIRED'
   if (!state?.last_run_at) return 'UNKNOWN'
   const lastRun = Date.parse(state.last_run_at)
-  if (!Number.isFinite(lastRun) || now - lastRun > 75 * 60 * 1000) return 'STALE'
+  if (!Number.isFinite(lastRun) || now - lastRun > STALE_AFTER_MINUTES * 60 * 1000) return 'STALE'
   if (state.last_status === 'FAILED' || Number(state.consecutive_deferred ?? 0) >= 3) return 'DEGRADED'
   if (['DEFERRED','RESET','BUSY'].includes(state.last_status)) return 'WARNING'
   return 'HEALTHY'
