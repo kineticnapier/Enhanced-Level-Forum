@@ -5,5 +5,8 @@ dist/
 .env
 .env.*
 !.env.example
+!.env.production.example
+wrangler.production.generated.json
+.wrangler-production-secrets.json
 *.log
 .DS_Store
