@@ -1,5 +1,7 @@
 # Enhanced Level Forum (ELF)
 
+[日本語](README.md) | **English**
+
 Current development version: **v0.3.0**
 
 Enhanced Level Forum is an ADOFAI difficulty forum/database built around versioned level data, auditable rating history, rerating proposals, and reviewable References.
