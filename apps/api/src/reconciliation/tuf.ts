@@ -137,7 +137,10 @@ async function linkTufObservationInTransaction(db: DbClient, input: LinkInput) {
     throw new TufReconciliationError(409, 'This TUF observation is already linked to a different ELF level')
   }
 
-  const levelResult = await db.query(`SELECT id,title,creator FROM levels WHERE id=$1 AND status<>'ARCHIVED'`, [input.levelId])
+  const levelResult = await db.query(
+    `SELECT id,song,title,artist,creator,effecter FROM levels WHERE id=$1 AND status<>'ARCHIVED'`,
+    [input.levelId],
+  )
   if (!levelResult.rowCount) throw new TufReconciliationError(404, 'ELF level not found')
   const level = levelResult.rows[0]
 
@@ -233,7 +236,11 @@ async function linkTufObservationInTransaction(db: DbClient, input: LinkInput) {
     tufDifficulty: observation.difficulty_label,
     tufSha256: observation.sha256,
     levelId: level.id,
+    levelSong: level.song,
     levelTitle: level.title,
+    levelArtist: level.artist,
+    levelCreator: level.creator,
+    levelEffecter: level.effecter,
     levelVersionId: version?.id ?? null,
     levelVersionLabel: version?.label ?? null,
     levelVersionSha256: version?.sha256 ?? null,
@@ -245,7 +252,14 @@ async function linkTufObservationInTransaction(db: DbClient, input: LinkInput) {
       snapshotId: observation.snapshot_id,
       externalId: observation.external_id,
     },
-    level: { id: level.id, title: level.title, creator: level.creator },
+    level: {
+      id: level.id,
+      song: level.song,
+      title: level.title,
+      artist: level.artist,
+      creator: level.creator,
+      effecter: level.effecter,
+    },
     version: version ? { id: version.id, label: version.label, sha256: version.sha256 } : null,
   }
 }
@@ -260,11 +274,14 @@ export async function createLevelFromTufObservation(
     observationId: string
     song?: string | null
     title?: string | null
+    artist?: string | null
     creator?: string | null
+    effecter?: string | null
     status?: string | null
     versionLabel?: string | null
     sha256?: string | null
     downloadUrl?: string | null
+    videoUrl?: string | null
     notes?: string | null
     actorId: string | null
   },
@@ -290,8 +307,15 @@ export async function createLevelFromTufObservation(
     }
 
     const song = input.song?.trim() || observation.song?.trim() || observation.title?.trim() || `TUF #${observation.external_id}`
-    const title = input.title?.trim() || observation.title?.trim() || observation.song?.trim() || `TUF #${observation.external_id}`
+    // `title` remains a DB/API compatibility alias. New metadata UI does not ask
+    // staff for a second chart title; new records default it to the song name.
+    const title = input.title?.trim() || song
+    // TUF's current normalized observation does not expose a dedicated artist
+    // field, so old clients/imports remain compatible with Unknown while the new
+    // staff form asks for the actual artist before creation.
+    const artist = input.artist?.trim() || 'Unknown'
     const creator = input.creator?.trim() || observation.creator?.trim() || 'Unknown'
+    const effecter = input.effecter?.trim() || null
     const versionLabel = input.versionLabel?.trim() || 'Original'
     const status = input.status?.trim() || 'LISTED'
     if (!['LISTED','UNLISTED','ARCHIVED'].includes(status)) throw new TufReconciliationError(400, 'Invalid level status')
@@ -303,17 +327,19 @@ export async function createLevelFromTufObservation(
     }
     const sha256 = suppliedSha?.toLowerCase() ?? null
     const downloadUrl = input.downloadUrl === undefined ? observation.download_url : input.downloadUrl?.trim() || null
+    const videoUrl = input.videoUrl?.trim() || null
     const notes = input.notes?.trim() || null
 
     const levelResult = await db.query(
-      `INSERT INTO levels(song,title,creator,status) VALUES ($1,$2,$3,$4) RETURNING *`,
-      [song, title, creator, status],
+      `INSERT INTO levels(song,title,artist,creator,effecter,status)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [song, title, artist, creator, effecter, status],
     )
     const level = levelResult.rows[0]
     const versionResult = await db.query(
-      `INSERT INTO level_versions(level_id,label,sha256,download_url,notes)
-       VALUES ($1,$2,$3,$4,$5) RETURNING *`,
-      [level.id, versionLabel, sha256, downloadUrl, notes],
+      `INSERT INTO level_versions(level_id,label,sha256,download_url,video_url,notes)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [level.id, versionLabel, sha256, downloadUrl, videoUrl, notes],
     )
     const version = versionResult.rows[0]
     await db.query('UPDATE levels SET current_version_id=$2,updated_at=now() WHERE id=$1', [level.id, version.id])
@@ -323,6 +349,8 @@ export async function createLevelFromTufObservation(
       source: 'TUF_RECONCILIATION',
       sourceObservationId: observation.id,
       externalId: observation.external_id,
+      artist,
+      effecter,
     })
 
     const linked = await linkTufObservationInTransaction(db, {
@@ -344,8 +372,15 @@ export async function createLevelFromTufObservation(
 
     return {
       ...linked,
-      level: { ...linked.level, song, status },
-      version: { id: version.id, label: version.label, sha256: version.sha256, downloadUrl: version.download_url, notes: version.notes },
+      level: { ...linked.level, song, title, artist, creator, effecter, status },
+      version: {
+        id: version.id,
+        label: version.label,
+        sha256: version.sha256,
+        downloadUrl: version.download_url,
+        videoUrl: version.video_url,
+        notes: version.notes,
+      },
       canonicalRating: null,
     }
   })
