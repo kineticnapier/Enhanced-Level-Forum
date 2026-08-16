@@ -1,7 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "enhanced-level-forum-api",
-  "main": "src/entry.ts",
+  "main": "src/worker.ts",
   "compatibility_date": "2026-08-14",
   "compatibility_flags": [
     "nodejs_compat"
@@ -10,6 +10,11 @@
     "ENVIRONMENT": "development",
     "WEB_ORIGIN": "http://localhost:5173",
     "ADMIN_ORIGIN": "http://localhost:5174"
+  },
+  "triggers": {
+    "crons": [
+      "17 * * * *"
+    ]
   },
   "hyperdrive": [
     {
