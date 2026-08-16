@@ -56,7 +56,7 @@ npm run setup:local
 - creates `apps/api/.dev.vars`, `apps/web/.env.local`, and `apps/admin/.env.local` from their examples without overwriting existing files;
 - connects to PostgreSQL;
 - creates the database if it does not exist;
-- applies all pending migrations.
+- applies all pending migrations, including authentication hardening migrations.
 
 The default connection is:
 
@@ -109,18 +109,29 @@ Use `localhost` consistently for browser-facing services. Do not mix it with `12
 
 The root `dev:api` command reads `DATABASE_URL` from `.env` and automatically supplies it to Wrangler's local Hyperdrive binding. Database passwords therefore do not need to be committed to `wrangler.jsonc`.
 
-## Bootstrap admin
+## Local bootstrap admin
 
 `npm run setup:local` creates `apps/api/.dev.vars` from the checked-in example if the file is missing.
 
-The initial example credentials are development-only:
+The example credentials are development-only:
 
 ```text
 Email:    admin@example.com
 Password: change-me-immediately
 ```
 
-The bootstrap account is created only when a login exactly matches `BOOTSTRAP_ADMIN_EMAIL` / `BOOTSTRAP_ADMIN_PASSWORD` and that email is not already present in the database. Change/remove the bootstrap credentials before a public deployment.
+The bootstrap account is created only when a local login exactly matches `BOOTSTRAP_ADMIN_EMAIL` / `BOOTSTRAP_ADMIN_PASSWORD` and that email is not already present.
+
+**`ENVIRONMENT=production` ignores bootstrap credentials completely.** Production administrators are created out-of-band after migrations:
+
+```powershell
+$env:DATABASE_URL="postgres://USER:PASSWORD@HOST:5432/adoforum?sslmode=require"
+$env:ELF_ADMIN_PASSWORD="a-long-unique-password"
+npm run auth:create-admin -- --email admin@example.com --name "ELF Admin"
+Remove-Item Env:ELF_ADMIN_PASSWORD
+```
+
+See `docs/SECURITY.md` for login throttling, account disabling, session revocation and cookie rules.
 
 ## TUF importer
 
@@ -160,6 +171,22 @@ For deterministic/offline testing, pass a JSON fixture containing `{ "levels": [
 npm run import:tuf -- .\path\to\tuf-fixture.json
 ```
 
+## Authentication hardening
+
+Production authentication adds:
+
+- host-only `__Host-elf_session` cookies (`Secure`, `HttpOnly`, `SameSite=Lax`);
+- exact browser-Origin checks for state-changing API calls;
+- salted email/IP login throttling backed by PostgreSQL;
+- active/disabled account state;
+- password change and admin password reset with session revocation;
+- session revocation on role changes;
+- a guard against disabling/demoting the final active ADMIN;
+- development-only bootstrap credentials;
+- out-of-band production ADMIN creation.
+
+Production requires the Worker secret `AUTH_RATE_LIMIT_SALT`.
+
 ## Tests
 
 Static/build checks:
@@ -168,9 +195,11 @@ Static/build checks:
 npm test
 ```
 
-DB/API integration smoke test:
+DB/API integration tests require all current migrations:
 
 ```powershell
+npm run setup:local
+
 # terminal 1
 npm run dev:api
 
@@ -178,24 +207,7 @@ npm run dev:api
 npm run test:e2e
 ```
 
-The E2E test verifies the canonical workflow and the external-import isolation boundary:
-
-```text
-login
- -> create level/version
- -> publish G9
- -> add ACTIVE G9 reference
- -> rerate to G10
- -> reference becomes NEEDS_REVIEW
- -> create/approve proposal
- -> audit entry exists
- -> import synthetic TUF snapshot
- -> exact SHA auto-links the external ID
- -> special difficulty remains external
- -> canonical_ratings / difficulty_references stay unchanged
-```
-
-Temporary E2E rows are removed afterward, including the imported snapshot and its cascading observations.
+The E2E suite covers the canonical workflow, TUF isolation/reconciliation/proposals, public governance UI APIs, Reference proposal execution, and production-auth behavior.
 
 ## Existing checkout
 
@@ -222,6 +234,7 @@ db/
 scripts/
   setup-local.mjs
   apply-migrations.mjs
+  create-admin.mjs
   dev-api.mjs
   import-tuf.mjs
   smoke.mjs
@@ -235,4 +248,4 @@ docs/
 
 ## Production deployment
 
-See `docs/DEPLOY.md` for Hyperdrive, production secrets, CORS origins and custom domains.
+See `docs/DEPLOY.md` for Hyperdrive, production secrets, CORS origins, the production administrator bootstrap, custom domains and the production smoke path.
