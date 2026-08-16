@@ -63,8 +63,10 @@ for (const invariant of [
 if (!devApi.includes("'--test-scheduled'")) throw new Error('local API dev must expose the scheduled test handler')
 if (!packageJson.includes('scripts/run-parallel.mjs build:shared build:api build:web build:admin')) throw new Error('root build is not parallelized')
 if (!packageJson.includes('scripts/run-parallel.mjs smoke:core smoke:public smoke:auth smoke:deploy smoke:i18n smoke:cron')) throw new Error('static smoke checks are not parallelized')
-if (!deploy.includes("runParallel('Build'") || !deploy.includes("runParallel('Deploy'")) throw new Error('production build/deploy is not parallelized')
+if (!deploy.includes("runParallel('Build'")) throw new Error('production build is not parallelized')
+if (!deploy.includes("=== Deploy (sequential) ===")) throw new Error('production deploy must be sequential')
+if (deploy.includes("runParallel('Deploy'")) throw new Error('production deploy must not run Wrangler jobs in parallel')
 
 console.log('TUF CRON STATIC SMOKE PASSED')
 console.log('every 30 minutes -> 5 pages per step -> persistent staging -> complete external snapshot only')
-console.log('npm build/smoke + production build/deploy run independent jobs in parallel')
+console.log('npm build/smoke + production build run independent jobs in parallel; Wrangler deploy is sequential')
