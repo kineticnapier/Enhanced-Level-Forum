@@ -3,10 +3,15 @@ import pg from 'pg'
 import { resolveDatabaseUrl } from './local-env.mjs'
 
 const { Client } = pg
+const PBKDF2_ITERATIONS = 100_000
 
 function argument(name) {
   const index = process.argv.indexOf(name)
   return index >= 0 ? process.argv[index + 1]?.trim() : undefined
+}
+
+function hasFlag(name) {
+  return process.argv.includes(name)
 }
 
 function base64Url(bytes) {
@@ -14,10 +19,9 @@ function base64Url(bytes) {
 }
 
 function hashPassword(password) {
-  const iterations = 210_000
   const salt = randomBytes(16)
-  const hash = pbkdf2Sync(password, salt, iterations, 32, 'sha256')
-  return `pbkdf2-sha256$${iterations}$${base64Url(salt)}$${base64Url(hash)}`
+  const hash = pbkdf2Sync(password, salt, PBKDF2_ITERATIONS, 32, 'sha256')
+  return `pbkdf2-sha256$${PBKDF2_ITERATIONS}$${base64Url(salt)}$${base64Url(hash)}`
 }
 
 function passwordError(password) {
@@ -30,9 +34,10 @@ function passwordError(password) {
 const email = (argument('--email') ?? '').toLowerCase()
 const displayName = argument('--name') ?? 'ELF Administrator'
 const password = process.env.ELF_ADMIN_PASSWORD ?? ''
+const resetPassword = hasFlag('--reset-password')
 
 if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-  console.error('Usage: npm run auth:create-admin -- --email admin@example.com --name "Admin"')
+  console.error('Usage: npm run auth:create-admin -- --email admin@example.com --name "Admin" [--reset-password]')
   console.error('A valid --email is required.')
   process.exit(1)
 }
@@ -61,8 +66,21 @@ try {
     if (row.role !== 'ADMIN' || row.is_active !== true) {
       throw new Error(`A user already exists for ${email} with role=${row.role}, active=${row.is_active}. Refusing to promote or reactivate it silently.`)
     }
-    await client.query('ROLLBACK')
-    console.log(`Active ADMIN already exists for ${email}; no changes made.`)
+    if (!resetPassword) {
+      await client.query('ROLLBACK')
+      console.log(`Active ADMIN already exists for ${email}; no changes made.`)
+    } else {
+      const passwordHash = hashPassword(password)
+      await client.query(
+        `UPDATE users
+         SET password_hash=$2,password_changed_at=now(),updated_at=now()
+         WHERE id=$1`,
+        [row.id, passwordHash],
+      )
+      await client.query(`DELETE FROM sessions WHERE user_id=$1`, [row.id])
+      await client.query('COMMIT')
+      console.log(`Reset production ADMIN password for ${row.email}; existing sessions revoked.`)
+    }
   } else {
     const passwordHash = hashPassword(password)
     const inserted = await client.query(
