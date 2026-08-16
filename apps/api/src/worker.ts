@@ -1,10 +1,11 @@
 import app from './entry'
 import type { Env } from './env'
-import { runTufImport } from './importers/tuf-run'
+import { runScheduledTufStep } from './importers/tuf-scheduled'
 
 type ScheduledControllerLike = {
   cron: string
   scheduledTime: number
+  noRetry?: () => void
 }
 
 export default {
@@ -12,21 +13,19 @@ export default {
 
   async scheduled(controller: ScheduledControllerLike, env: Env) {
     const scheduledAt = new Date(controller.scheduledTime).toISOString()
-    console.log(`[TUF cron] starting scheduled import (${controller.cron}) at ${scheduledAt}`)
+    console.log(`[TUF cron] starting incremental crawl step (${controller.cron}) at ${scheduledAt}`)
 
-    const result = await runTufImport(env, {
-      actorId: null,
-      executionSource: 'SCHEDULED',
-      auditMetadata: {
-        cron: controller.cron,
-        scheduledAt,
-      },
+    const result = await runScheduledTufStep(env, {
+      cron: controller.cron,
+      scheduledAt,
     })
 
-    console.log('[TUF cron] import completed', {
-      snapshotId: result.snapshot.id,
-      sourceVersion: result.snapshot.sourceVersion,
-      summary: result.summary,
-    })
+    if (result.status === 'DEFERRED' || result.status === 'RESET' || result.status === 'BUSY') {
+      // Expected upstream instability should wait for the next 30-minute tick
+      // instead of asking the platform to immediately retry the same weak API.
+      controller.noRetry?.()
+    }
+
+    console.log('[TUF cron] step completed', result)
   },
 }
