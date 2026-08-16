@@ -1,5 +1,7 @@
 # v0.2.1 build fix
 
+[日本語](../BUILD_FIX_0.2.1.md) | **English**
+
 This patch addresses the three TypeScript 5.8 errors reported by `npm run build` on Windows:
 
 1. `crypto.ts`: `Uint8Array<ArrayBufferLike>` was rejected as a WebCrypto `BufferSource` for PBKDF2 salt after base64url decoding. The decoded salt is now copied into an owned `ArrayBuffer` before `deriveBits`.
