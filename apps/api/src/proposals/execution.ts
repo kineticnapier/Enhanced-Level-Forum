@@ -15,6 +15,8 @@ export class ProposalDecisionError extends Error {
 type Rating = { family: Family; tier: number }
 type DecisionStatus = 'APPROVED' | 'REJECTED' | 'WITHDRAWN'
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+
 function parseRating(value: unknown): Rating | null {
   if (!value || typeof value !== 'object') return null
   const record = value as Record<string, unknown>
@@ -97,7 +99,7 @@ export async function decideProposal(
     const baselinePresent = Object.prototype.hasOwnProperty.call(payload, 'currentCanonicalRating')
     const baselineRating = payload.currentCanonicalRating === null ? null : parseRating(payload.currentCanonicalRating)
 
-    if (!targetLevelVersionId || !proposedRating || !baselinePresent || (payload.currentCanonicalRating !== null && !baselineRating)) {
+    if (!UUID_RE.test(targetLevelVersionId) || !proposedRating || !baselinePresent || (payload.currentCanonicalRating !== null && !baselineRating)) {
       throw new ProposalDecisionError(
         409,
         'RERATE proposal payload cannot be executed safely; target version, baseline rating, and proposed rating are required',
