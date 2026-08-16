@@ -5,6 +5,10 @@ const PAGE_LIMIT = 100
 const LEVEL_SORT = 'RECENT_ASC'
 const MAX_ATTEMPTS = 4
 const REQUIRED_STABLE_PASSES = 2
+const REQUEST_ATTEMPTS = 4
+const REQUEST_RETRY_BASE_MS = 500
+const PAGE_DELAY_MS = 25
+const STABLE_SCAN_DELAY_MS = 1000
 
 type JsonRecord = Record<string, unknown>
 
@@ -34,12 +38,40 @@ function sameIds(a: string[], b: string[]): boolean {
   return a.length === b.length && a.every((id, index) => id === b[index])
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function retryableStatus(status: number): boolean {
+  return status === 429 || status >= 500
+}
+
 async function fetchJson(url: URL): Promise<any> {
-  const response = await fetch(url, { headers: { Accept: 'application/json' } })
-  if (!response.ok) {
-    throw new Error(`TUF API ${response.status} ${response.statusText}: ${url.pathname}${url.search}`)
+  let lastProblem = `TUF API request failed: ${url.pathname}${url.search}`
+
+  for (let attempt = 1; attempt <= REQUEST_ATTEMPTS; attempt++) {
+    try {
+      const response = await fetch(url, { headers: { Accept: 'application/json' } })
+      if (response.ok) return response.json()
+
+      lastProblem = `TUF API ${response.status} ${response.statusText}: ${url.pathname}${url.search}`
+      if (!retryableStatus(response.status) || attempt === REQUEST_ATTEMPTS) {
+        throw new Error(lastProblem)
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      lastProblem = message
+      if (attempt === REQUEST_ATTEMPTS) throw error
+    }
+
+    const delayMs = REQUEST_RETRY_BASE_MS * 2 ** (attempt - 1)
+    console.warn(
+      `[TUF import] transient request failure; retry ${attempt + 1}/${REQUEST_ATTEMPTS} in ${delayMs}ms: ${lastProblem}`,
+    )
+    await sleep(delayMs)
   }
-  return response.json()
+
+  throw new Error(lastProblem)
 }
 
 async function fetchLevelPass(apiBase: string): Promise<LevelPass> {
@@ -87,6 +119,11 @@ async function fetchLevelPass(apiBase: string): Promise<LevelPass> {
     if (!payload?.hasMore || results.length === 0) break
     offset += results.length
     page += 1
+
+    // A complete pass currently spans many TUF API requests. A very small
+    // delay avoids immediately hammering the upstream service while adding
+    // only a few seconds to a full scheduled scan.
+    await sleep(PAGE_DELAY_MS)
 
     if (guard === 999) throw new Error('TUF level pagination exceeded the safety limit')
   }
@@ -142,19 +179,22 @@ export async function fetchConsistentTufSnapshot(
         }
       } else {
         lastProblem = previous
-          ? `level id sequence changed between consecutive scans (${previous.total} -> ${current.total})`
+          ? `level id sequence changed between consecutive successful scans (${previous.total} -> ${current.total})`
           : `waiting for ${REQUIRED_STABLE_PASSES} consecutive stable scans`
         previous = current
         console.warn(`[TUF import] level scan ${attempt}/${MAX_ATTEMPTS} valid; ${lastProblem}`)
+        if (attempt < MAX_ATTEMPTS) await sleep(STABLE_SCAN_DELAY_MS)
       }
     } catch (error) {
       lastProblem = error instanceof Error ? error.message : String(error)
-      previous = null
+      // A transient network/upstream failure does not invalidate the most
+      // recent complete pass. The next complete pass can still be compared
+      // against it; any source change will be detected by total/id mismatch.
       console.warn(`[TUF import] level scan ${attempt}/${MAX_ATTEMPTS} failed: ${lastProblem}`)
     }
   }
 
   throw new Error(
-    `Could not obtain a consistent TUF level snapshot after ${MAX_ATTEMPTS} scans: ${lastProblem}`,
+    `Could not obtain a consistent TUF level snapshot after ${MAX_ATTEMPTS} scan attempts: ${lastProblem}`,
   )
 }
