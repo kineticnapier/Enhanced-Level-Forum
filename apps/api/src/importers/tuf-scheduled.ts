@@ -6,7 +6,7 @@ import { importTufSnapshot } from './tuf'
 
 const TUF_API_BASE = 'https://api.tuforums.com/v2/database'
 const PAGE_LIMIT = 100
-const PAGES_PER_RUN = 5
+const PAGES_PER_RUN = 10
 const LEVEL_SORT = 'RECENT_ASC'
 const SOURCE = 'TUF'
 const ADVISORY_LOCK = 'elf:tuf:scheduled-crawl'
