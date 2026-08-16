@@ -2,15 +2,16 @@ import { readFile, rm } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { ROOT_DIR } from './local-env.mjs'
 
-const saved = { ...process.env }
-Object.assign(process.env, {
+const overrides = {
   ELF_PUBLIC_ORIGIN: 'https://forum.example.com',
   ELF_ADMIN_ORIGIN: 'https://admin.example.com',
   ELF_API_ORIGIN: 'https://api.example.com',
   DATABASE_URL: 'postgres://user:password@db.example.net:5432/adoforum?sslmode=require',
   ELF_HYPERDRIVE_ID: '0123456789abcdef0123456789abcdef',
   AUTH_RATE_LIMIT_SALT: 'static-smoke-only-rate-limit-salt-0123456789',
-})
+}
+const saved = Object.fromEntries(Object.keys(overrides).map((key) => [key, process.env[key]]))
+Object.assign(process.env, overrides)
 
 try {
   const { loadProductionConfig, writeProductionWranglerConfigs } = await import('./production-config.mjs')
@@ -44,7 +45,10 @@ try {
 
   console.log('CLOUDFLARE PRODUCTION DEPLOY STATIC SMOKE PASSED')
 } finally {
-  process.env = saved
+  for (const [key, previous] of Object.entries(saved)) {
+    if (previous === undefined) delete process.env[key]
+    else process.env[key] = previous
+  }
   await Promise.all([
     rm(resolve(ROOT_DIR, 'apps/api/wrangler.production.generated.json'), { force: true }),
     rm(resolve(ROOT_DIR, 'apps/web/wrangler.production.generated.json'), { force: true }),
