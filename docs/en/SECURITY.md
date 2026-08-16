@@ -26,6 +26,18 @@ Requests with no `Origin` remain possible for explicit CLI/service jobs. This is
 
 CORS never uses a wildcard with credentials.
 
+## Scheduled TUF imports
+
+Cloudflare Cron Trigger invokes the Worker's `scheduled()` handler directly. It does not go through the browser admin API and does not reuse a human administrator session.
+
+- Cron runs use `actorId: null` and are treated as system execution.
+- `TUF_SCHEDULED_IMPORT` audit rows record the cron expression and scheduled execution time.
+- Scheduled imports only handle external observations in `external_*` / `import_*` data.
+- `canonical_ratings` and `difficulty_references` remain outside the scheduled import path.
+- Promoting TUF difficulty evidence into an ELF canonical rating still requires the human proposal/approval workflow.
+
+See `docs/TUF_CRON.md` for the execution path and local testing instructions.
+
 ## Login throttling
 
 `004_auth_hardening.sql` adds `auth_login_attempts`.
@@ -69,7 +81,6 @@ User creation, status changes, role changes, password changes/resets, and authen
 
 ## Remaining work
 
-- dedicated service identity / execution path for scheduled TUF imports (planned with the Cron Trigger work);
 - password-recovery or external identity-provider flow if self-service recovery is needed;
 - bot mitigation if public self-registration is ever added;
 - moderation policy for free-text proposal/comments.

@@ -26,6 +26,18 @@
 
 credentials付きCORSでワイルドカードは使いません。
 
+## 定期TUF取り込み
+
+Cloudflare Cron Trigger はブラウザ経由の管理APIや人間の管理者セッションを使わず、Worker の `scheduled()` handler から直接 TUF importer を実行します。
+
+- Cron実行の `actorId` は `null` で、システム実行として扱います。
+- `TUF_SCHEDULED_IMPORT` 監査行に Cron 式と予定実行時刻を記録します。
+- 定期取り込みは `external_*` / `import_*` の外部観測値だけを扱います。
+- `canonical_ratings` / `difficulty_references` は定期取り込み経路から変更しません。
+- TUF難易度から確定難易度への反映は、引き続き人間の提案・承認手順が必要です。
+
+詳細は `docs/TUF_CRON.md` を参照してください。
+
 ## ログイン試行制限
 
 `004_auth_hardening.sql` が `auth_login_attempts` を追加します。
@@ -69,7 +81,6 @@ Remove-Item Env:ELF_ADMIN_PASSWORD
 
 ## 残作業
 
-- 定期TUF取り込み用の専用サービスID / 実行経路（Cron Trigger作業で予定）
 - セルフサービス復旧が必要ならパスワード復旧または外部IdP
 - 公開ユーザー登録を追加する場合のbot対策
 - 提案・コメント自由記述のモデレーション方針

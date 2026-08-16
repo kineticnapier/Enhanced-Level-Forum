@@ -85,7 +85,7 @@ if (!tufEvidence.includes('not a canonical P/G/U integer tier')) throw new Error
 if (!tufEvidence.includes('An open proposal already covers this TUF evidence')) throw new Error('TUF evidence workflow must guard duplicate open proposals')
 
 const wrangler = await readFile(new URL('../apps/api/wrangler.jsonc', import.meta.url), 'utf8')
-if (!wrangler.includes('"main": "src/entry.ts"')) throw new Error('Wrangler is not using importer-aware entrypoint')
+if (!wrangler.includes('"main": "src/worker.ts"')) throw new Error('Wrangler is not using the fetch+scheduled Worker entrypoint')
 
 const web = await readFile(new URL('../apps/web/src/main.tsx', import.meta.url), 'utf8')
 const webI18n = await readFile(new URL('../apps/web/src/i18n.tsx', import.meta.url), 'utf8')

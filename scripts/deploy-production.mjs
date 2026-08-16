@@ -1,6 +1,6 @@
 import { rm } from 'node:fs/promises'
 import { resolve } from 'node:path'
-import { spawnSync } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { loadProductionConfig, writeApiSecretsFile, writeProductionWranglerConfigs } from './production-config.mjs'
 import { ROOT_DIR } from './local-env.mjs'
 
@@ -16,23 +16,38 @@ function invocation(command, args) {
   return { executable: command, args }
 }
 
-function run(command, args, { cwd = ROOT_DIR, env = process.env } = {}) {
-  console.log(`\n> ${command} ${args.join(' ')}`)
+function run(command, args, { cwd = ROOT_DIR, env = process.env, label = `${command} ${args.join(' ')}` } = {}) {
+  console.log(`\n> ${label}`)
+  return new Promise((resolvePromise, reject) => {
+    let call
+    try {
+      call = invocation(command, args)
+    } catch (error) {
+      reject(error)
+      return
+    }
 
-  let call
-  try {
-    call = invocation(command, args)
-  } catch (error) {
-    console.error(error?.message ?? error)
-    process.exit(1)
-  }
+    const child = spawn(call.executable, call.args, { cwd, env, stdio: 'inherit', shell: false })
+    child.on('error', reject)
+    child.on('exit', (code, signal) => {
+      if (code === 0) resolvePromise()
+      else reject(new Error(`${label} failed (${signal ?? `exit ${code ?? 1}`})`))
+    })
+  })
+}
 
-  const result = spawnSync(call.executable, call.args, { cwd, env, stdio: 'inherit', shell: false })
-  if (result.error) {
-    console.error(result.error.message)
-    process.exit(1)
+async function runParallel(label, tasks) {
+  console.log(`\n=== ${label} (${tasks.length} parallel jobs) ===`)
+  const results = await Promise.allSettled(tasks.map((task) => run(task.command, task.args, task.options)))
+  const failures = results
+    .map((result, index) => ({ result, task: tasks[index] }))
+    .filter(({ result }) => result.status === 'rejected')
+  if (failures.length) {
+    for (const { result, task } of failures) {
+      console.error(`[parallel] ${task.options?.label ?? task.command} failed:`, result.reason?.message ?? result.reason)
+    }
+    throw new Error(`${label} failed in ${failures.length} job(s)`)
   }
-  if (result.status !== 0) process.exit(result.status ?? 1)
 }
 
 const config = await loadProductionConfig({ requireHyperdrive: true, requireSecrets: true })
@@ -44,21 +59,36 @@ console.log(`Public: ${config.publicOrigin}`)
 console.log(`Admin:  ${config.adminOrigin}`)
 console.log(`API:    ${config.apiOrigin}`)
 
+const apiDir = resolve(ROOT_DIR, 'apps/api')
+const webDir = resolve(ROOT_DIR, 'apps/web')
+const adminDir = resolve(ROOT_DIR, 'apps/admin')
+const frontendEnv = { ...process.env, VITE_API_URL: `${config.apiOrigin}/api` }
+
 try {
-  run('npm', ['run', 'build:shared'])
-  run('npm', ['run', 'build:api'])
+  await runParallel('Build', [
+    { command: 'npm', args: ['run', 'build:shared'], options: { label: 'shared build' } },
+    { command: 'npm', args: ['run', 'build:api'], options: { label: 'API build' } },
+    { command: 'npm', args: ['run', 'build'], options: { cwd: webDir, env: frontendEnv, label: 'public frontend build' } },
+    { command: 'npm', args: ['run', 'build'], options: { cwd: adminDir, env: frontendEnv, label: 'admin frontend build' } },
+  ])
 
-  const apiDir = resolve(ROOT_DIR, 'apps/api')
-  run('npx', ['wrangler', 'deploy', '--config', 'wrangler.production.generated.json', '--secrets-file', secretsPath], { cwd: apiDir })
-
-  const frontendEnv = { ...process.env, VITE_API_URL: `${config.apiOrigin}/api` }
-  const webDir = resolve(ROOT_DIR, 'apps/web')
-  run('npm', ['run', 'build'], { cwd: webDir, env: frontendEnv })
-  run('npx', ['wrangler', 'deploy', '--config', 'wrangler.production.generated.json'], { cwd: webDir })
-
-  const adminDir = resolve(ROOT_DIR, 'apps/admin')
-  run('npm', ['run', 'build'], { cwd: adminDir, env: frontendEnv })
-  run('npx', ['wrangler', 'deploy', '--config', 'wrangler.production.generated.json'], { cwd: adminDir })
+  await runParallel('Deploy', [
+    {
+      command: 'npx',
+      args: ['wrangler', 'deploy', '--config', 'wrangler.production.generated.json', '--secrets-file', secretsPath],
+      options: { cwd: apiDir, label: 'API deploy' },
+    },
+    {
+      command: 'npx',
+      args: ['wrangler', 'deploy', '--config', 'wrangler.production.generated.json'],
+      options: { cwd: webDir, label: 'public frontend deploy' },
+    },
+    {
+      command: 'npx',
+      args: ['wrangler', 'deploy', '--config', 'wrangler.production.generated.json'],
+      options: { cwd: adminDir, label: 'admin frontend deploy' },
+    },
+  ])
 } finally {
   await rm(secretsPath, { force: true }).catch(() => undefined)
 }

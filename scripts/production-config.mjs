@@ -4,6 +4,7 @@ import { parseEnvText, ROOT_DIR } from './local-env.mjs'
 
 const PRODUCTION_ENV = resolve(ROOT_DIR, '.env.production')
 const DEPLOY_MODES = new Set(['workers_dev', 'custom_domain'])
+const TUF_IMPORT_CRON = '*/30 * * * *'
 const WORKER_NAMES = {
   public: 'enhanced-level-forum-web',
   admin: 'enhanced-level-forum-admin',
@@ -164,7 +165,7 @@ export async function writeProductionWranglerConfigs(config) {
   const api = {
     $schema: 'node_modules/wrangler/config-schema.json',
     name: WORKER_NAMES.api,
-    main: 'src/entry.ts',
+    main: 'src/worker.ts',
     compatibility_date: '2026-08-14',
     compatibility_flags: ['nodejs_compat'],
     ...routingFor(config, config.apiOrigin),
@@ -173,6 +174,7 @@ export async function writeProductionWranglerConfigs(config) {
       WEB_ORIGIN: config.publicOrigin,
       ADMIN_ORIGIN: config.adminOrigin,
     },
+    triggers: { crons: [TUF_IMPORT_CRON] },
     secrets: { required: ['AUTH_RATE_LIMIT_SALT'] },
     hyperdrive: [{ binding: 'HYPERDRIVE', id: config.hyperdriveId }],
     observability: { enabled: true },
