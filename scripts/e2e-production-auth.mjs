@@ -103,7 +103,7 @@ try {
   await login(limitedEmail, limitedPassword, 429)
 
   const adminLogin = await login(adminEmail, adminPassword)
-  let adminCookie = adminLogin.cookie
+  const adminCookie = adminLogin.cookie
   if (!adminCookie.startsWith('elf_session=')) throw new Error(`development session cookie is unexpected: ${adminCookie}`)
   const setCookie = adminLogin.response.headers.get('set-cookie') ?? ''
   if (setCookie.toLowerCase().includes('domain=')) throw new Error(`session cookie must be host-only: ${setCookie}`)
@@ -199,7 +199,10 @@ try {
     try {
       const ids = [adminId, targetId, limitedId].filter(Boolean)
       if (ids.length) {
-        await db.query(`DELETE FROM audit_log WHERE actor_id=ANY($1::uuid[]) OR entity_id=ANY($1::uuid[])`, [ids])
+        await db.query(
+          `DELETE FROM audit_log WHERE actor_id=ANY($1::uuid[]) OR entity_id=ANY($2::text[])`,
+          [ids, ids],
+        )
         await db.query(`DELETE FROM users WHERE id=ANY($1::uuid[])`, [ids])
       }
       await db.query(`DELETE FROM auth_login_attempts WHERE email_hash=ANY($1::char(64)[])`, [
