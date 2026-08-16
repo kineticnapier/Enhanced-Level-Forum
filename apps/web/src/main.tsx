@@ -16,6 +16,7 @@ import type {
 import { api } from './api'
 import { I18nProvider, LanguageSwitch, useI18n } from './i18n'
 import './styles.css'
+import './public-level-detail.css'
 
 type Route = {
   page: 'home' | 'levels' | 'level' | 'references' | 'proposals' | 'proposal' | 'login'
@@ -218,7 +219,7 @@ function Levels() {
     <div className="table-wrap"><table><thead><tr><th>{t('levels.colRating')}</th><th>{t('levels.colLevel')}</th><th>{t('levels.colCreator')}</th><th>{t('levels.colEvidence')}</th></tr></thead><tbody>
       {data.levels.map((level) => <tr key={level.id}>
         <td>{level.currentRating ? <RatingBadge family={level.currentRating.family} tier={level.currentRating.tier} /> : <span className="muted">{t('common.unrated')}</span>}</td>
-        <td><a href={`#/levels/${level.id}`}><strong>{level.title}</strong></a><small>{level.song}</small></td>
+        <td className="level-list-identity"><a href={`#/levels/${level.id}`}><strong>{level.song}</strong></a><small>{level.artist}</small></td>
         <td>{level.creator}</td>
         <td><span>{t('levels.votes', { count: level.voteCount })}</span><small>{t('levels.references', { count: level.referenceCount })}</small></td>
       </tr>)}
@@ -229,7 +230,7 @@ function Levels() {
 }
 
 function Level({ id, user }: { id: string; user: SessionUser | null }) {
-  const { t, date, lean, proposalType } = useI18n()
+  const { t, date, lean, proposalType, locale } = useI18n()
   const [level, setLevel] = useState<LevelDetail | null>(null)
   const [proposals, setProposals] = useState<ProposalRow[]>([])
   const [message, setMessage] = useState('')
@@ -248,9 +249,29 @@ function Level({ id, user }: { id: string; user: SessionUser | null }) {
   if (error) return <div className="panel error">{error}</div>
   if (!level) return <div className="panel">{t('common.loading')}</div>
   const canRate = user && ['RATER','REFERENCE_MANAGER','MODERATOR','ADMIN'].includes(user.role)
+  const currentVersion = level.versions.find((version) => version.id === level.currentVersionId) ?? level.versions[0] ?? null
+  const copy = locale === 'ja'
+    ? { creator:'制作', effecter:'エフェクト', download:'配布ページ', video:'動画を見る', currentVersion:'現行バージョン' }
+    : { creator:'Creator', effecter:'Effects', download:'Download', video:'Watch video', currentVersion:'Current version' }
 
   return <section>
-    <div className="section-head level-head"><div><p className="eyebrow">{level.song}</p><h1>{level.title}</h1><p>{t('common.by', { name: level.creator })}</p></div><div className="level-rating">{level.currentRating ? <RatingBadge family={level.currentRating.family} tier={level.currentRating.tier} /> : <span className="muted">{t('common.unrated')}</span>}</div></div>
+    <div className="level-public-hero">
+      <div>
+        <p className="level-public-artist">{level.artist}</p>
+        <h1>{level.song}</h1>
+        <div className="level-public-credits">
+          <span><b>{copy.creator}</b>{level.creator}</span>
+          {level.effecter && <span><b>{copy.effecter}</b>{level.effecter}</span>}
+        </div>
+        {(currentVersion?.downloadUrl || currentVersion?.videoUrl) && <div className="level-public-actions">
+          {currentVersion.videoUrl && <a className="button" target="_blank" rel="noreferrer" href={currentVersion.videoUrl}>{copy.video}</a>}
+          {currentVersion.downloadUrl && <a className="button secondary" target="_blank" rel="noreferrer" href={currentVersion.downloadUrl}>{copy.download}</a>}
+        </div>}
+      </div>
+      <div className="level-public-rating">{level.currentRating ? <RatingBadge family={level.currentRating.family} tier={level.currentRating.tier} /> : <span className="muted">{t('common.unrated')}</span>}</div>
+    </div>
+
+    {currentVersion && <div className="current-version-strip"><span>{copy.currentVersion}</span><strong>{currentVersion.label}</strong><code>{currentVersion.sha256 ?? t('level.noSha')}</code></div>}
     <div className="fact-row"><span>{t('level.versionCount', { count: level.versions.length })}</span><span>{t('level.currentVotes', { count: level.voteCount })}</span><span>{t('level.referenceCount', { count: level.referenceCount })}</span><span>{t('level.openProposalCount', { count: proposals.filter((p) => p.status === 'OPEN').length })}</span></div>
 
     <div className="two-col">
@@ -258,7 +279,8 @@ function Level({ id, user }: { id: string; user: SessionUser | null }) {
         <div><strong>{v.label}</strong>{v.id === level.currentVersionId && <span className="pill">{t('common.current')}</span>}</div>
         <div>{v.currentRating ? <RatingBadge family={v.currentRating.family} tier={v.currentRating.tier} /> : <span className="muted">{t('common.unrated')}</span>}</div>
         <code>{v.sha256 ?? t('level.noSha')}</code>
-        {v.notes && <p>{v.notes}</p>}{v.downloadUrl && <a className="text-link" target="_blank" rel="noreferrer" href={v.downloadUrl}>{t('level.download')}</a>}
+        {v.notes && <p>{v.notes}</p>}
+        {(v.downloadUrl || v.videoUrl) && <div className="version-links">{v.videoUrl && <a className="text-link" target="_blank" rel="noreferrer" href={v.videoUrl}>{copy.video}</a>}{v.downloadUrl && <a className="text-link" target="_blank" rel="noreferrer" href={v.downloadUrl}>{copy.download}</a>}</div>}
       </div>)}</div>
       <div className="panel"><h2>{t('level.ratingHistory')}</h2>{level.ratingHistory.length ? level.ratingHistory.map((r) => <div className="history" key={r.id}>
         <RatingBadge family={r.family} tier={r.tier} /><strong>{r.versionLabel}</strong><span>{date(r.effectiveFrom)}</span><Status value={r.effectiveTo ? 'CLOSED' : 'ACTIVE'} /><p>{r.reason ?? t('level.noDecisionNote')}</p>

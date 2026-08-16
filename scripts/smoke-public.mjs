@@ -55,5 +55,23 @@ for (const ui of [
 }
 if (!web.includes('Array.from({length:30}')) throw new Error('Reference coverage UI must expose all 30 canonical tiers')
 
+for (const invariant of [
+  'level.artist',
+  'level.effecter',
+  'currentVersion?.videoUrl',
+  'currentVersion?.downloadUrl',
+  'className="level-public-hero"',
+  'className="current-version-strip"',
+  'className="level-list-identity"',
+]) {
+  if (!web.includes(invariant)) throw new Error(`practical public level presentation missing: ${invariant}`)
+}
+if (web.includes('<h1>{level.title}</h1>')) throw new Error('public level detail must not display the legacy title alias')
+
+const detailCss = await readFile(new URL('../apps/web/src/public-level-detail.css', import.meta.url), 'utf8')
+for (const invariant of ['.level-public-hero', '.level-public-actions', '.current-version-strip']) {
+  if (!detailCss.includes(invariant)) throw new Error(`public level detail styling missing: ${invariant}`)
+}
+
 console.log('PUBLIC GOVERNANCE STATIC SMOKE PASSED')
-console.log('catalog search/detail -> Reference filters -> proposal diff/stale state -> voting/comments')
+console.log('catalog search/detail -> practical song metadata -> Version links -> Reference filters -> proposal diff/stale state -> voting/comments')
