@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { LevelDetail, LevelListItem } from '@elf/shared'
+import type { Family, LevelDetail, LevelListItem } from '@elf/shared'
 import { api } from './api'
 import { useI18n } from './i18n'
 
@@ -79,7 +79,7 @@ function LevelEditor({level,onChanged,onError}:{level:LevelDetail;onChanged:()=>
   const { locale }=useI18n();const l=labels[locale]
   const currentVersion=level.versions.find((v)=>v.id===level.currentVersionId)??level.versions[0]
   const [song,setSong]=useState(level.song);const [artist,setArtist]=useState(level.artist);const [creator,setCreator]=useState(level.creator);const [effecter,setEffecter]=useState(level.effecter??'')
-  const [family,setFamily]=useState(level.currentRating?.family??'G');const [tier,setTier]=useState(level.currentRating?.tier??1);const [confidence,setConfidence]=useState(level.currentRating?.confidence??'');const [reason,setReason]=useState('')
+  const [family,setFamily]=useState<Family>(level.currentRating?.family??'G');const [tier,setTier]=useState(level.currentRating?.tier??1);const [confidence,setConfidence]=useState(level.currentRating?.confidence??'');const [reason,setReason]=useState('')
   const [version,setVersion]=useState('');const [download,setDownload]=useState('');const [video,setVideo]=useState('');const [sha,setSha]=useState('')
   useEffect(()=>{setSong(level.song);setArtist(level.artist);setCreator(level.creator);setEffecter(level.effecter??'')},[level.song,level.artist,level.creator,level.effecter])
   const run=async(action:()=>Promise<unknown>)=>{onError('');try{await action();onChanged()}catch(e){onError(e instanceof Error?e.message:String(e))}}
@@ -88,7 +88,7 @@ function LevelEditor({level,onChanged,onError}:{level:LevelDetail;onChanged:()=>
     <h3>{l.metadata}</h3>
     <div className="form"><input placeholder={l.song} value={song} onChange={(e)=>setSong(e.target.value)}/><input placeholder={l.artist} value={artist} onChange={(e)=>setArtist(e.target.value)}/><input placeholder={l.creator} value={creator} onChange={(e)=>setCreator(e.target.value)}/><input placeholder={l.effecter} value={effecter} onChange={(e)=>setEffecter(e.target.value)}/><button className="secondary" disabled={!song.trim()||!artist.trim()||!creator.trim()} onClick={()=>void run(()=>api(`/admin/levels/${level.id}`,{method:'PATCH',body:JSON.stringify({song,artist,creator,effecter:effecter||null})}))}>{l.saveMetadata}</button></div>
     <h3>{l.publishRerate}</h3><p className="muted">{l.ratingRule}</p>
-    <div className="grid three"><select value={family} onChange={(e)=>setFamily(e.target.value)}><option>P</option><option>G</option><option>U</option></select><input type="number" min="1" max="30" value={tier} onChange={(e)=>setTier(Number(e.target.value))}/><input type="number" min="0" max="1" step=".05" placeholder={l.confidence} value={confidence} onChange={(e)=>setConfidence(e.target.value)}/></div>
+    <div className="grid three"><select value={family} onChange={(e)=>setFamily(e.target.value as Family)}><option>P</option><option>G</option><option>U</option></select><input type="number" min="1" max="30" value={tier} onChange={(e)=>setTier(Number(e.target.value))}/><input type="number" min="0" max="1" step=".05" placeholder={l.confidence} value={confidence} onChange={(e)=>setConfidence(e.target.value)}/></div>
     <textarea placeholder={l.reason} value={reason} onChange={(e)=>setReason(e.target.value)}/><button disabled={!currentVersion} onClick={()=>void run(async()=>{await api(`/admin/levels/${level.id}/ratings`,{method:'POST',body:JSON.stringify({levelVersionId:currentVersion?.id,family,tier,confidence:confidence===''?null:Number(confidence),reason})});setReason('')})}>{l.publish}</button>
     <h3>{l.addVersion}</h3>
     <div className="form"><input placeholder={`${l.version} *`} value={version} onChange={(e)=>setVersion(e.target.value)}/><input placeholder={l.download} value={download} onChange={(e)=>setDownload(e.target.value)}/><input placeholder={l.video} value={video} onChange={(e)=>setVideo(e.target.value)}/><input placeholder={l.sha} value={sha} onChange={(e)=>setSha(e.target.value)}/><button className="secondary" disabled={!version.trim()} onClick={()=>void run(async()=>{await api(`/admin/levels/${level.id}/versions`,{method:'POST',body:JSON.stringify({label:version,downloadUrl:download||null,videoUrl:video||null,sha256:sha||null,makeCurrent:true})});setVersion('');setDownload('');setVideo('');setSha('')})}>{l.addCurrent}</button></div>
