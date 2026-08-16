@@ -123,11 +123,11 @@ try {
   const proposal = (await request('/proposals', {
     method: 'POST',
     body: {
-      type: 'RERATE',
+      type: 'OTHER',
       levelId,
       title: `E2E proposal ${suffix}`,
       reason: 'E2E governance flow',
-      payload: { family: 'G', tier: 10 },
+      payload: { note: 'status-only baseline proposal' },
     },
   })).payload.proposal
 

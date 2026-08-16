@@ -21,6 +21,31 @@ for (const route of ['/api/levels', '/api/references', '/api/proposals', '/api/a
   if (!api.includes(route)) throw new Error(`route missing: ${route}`)
 }
 if (!api.includes("version: '0.3.0'")) throw new Error('API version mismatch')
+if (!api.includes('decideProposal') || !api.includes('ProposalDecisionError')) {
+  throw new Error('admin proposal decision route is not using transactional proposal execution')
+}
+
+const services = await readFile(new URL('../apps/api/src/services.ts', import.meta.url), 'utf8')
+if (!services.includes('publishCanonicalRatingInTransaction')) {
+  throw new Error('canonical rerate core must be reusable inside proposal decision transaction')
+}
+
+const proposalExecution = await readFile(new URL('../apps/api/src/proposals/execution.ts', import.meta.url), 'utf8')
+for (const invariant of [
+  "proposal.type !== 'RERATE'",
+  'FOR UPDATE',
+  'currentCanonicalRating',
+  'targetLevelVersionId',
+  'proposedRating',
+  'Proposal baseline is stale',
+  'publishCanonicalRatingInTransaction',
+  'PROPOSAL_EXECUTION',
+]) {
+  if (!proposalExecution.includes(invariant)) throw new Error(`proposal execution invariant missing: ${invariant}`)
+}
+if (!proposalExecution.includes("status: 'STATUS_ONLY'" ) && !proposalExecution.includes("execution: 'STATUS_ONLY'")) {
+  throw new Error('non-RERATE proposal decisions must remain explicit status-only decisions')
+}
 
 const entry = await readFile(new URL('../apps/api/src/entry.ts', import.meta.url), 'utf8')
 for (const route of ["'/api/admin/imports/tuf'", "'/api/admin/imports/tuf/issues'", "'/api/admin/imports/tuf/unlinked'", "'/api/admin/imports/tuf/link'", "'/api/admin/imports/tuf/evidence'", "'/api/admin/imports/tuf/proposals'"]) {
@@ -107,7 +132,7 @@ if (!adminReconciliation.includes('TufEvidenceProposals') || !adminEvidence.incl
   throw new Error('TUF evidence proposal admin UI is not wired')
 }
 
-for (const script of ['local-env.mjs', 'setup-local.mjs', 'dev-api.mjs', 'e2e-smoke.mjs', 'e2e-tuf-reconciliation.mjs', 'e2e-tuf-evidence.mjs', 'import-tuf.mjs']) {
+for (const script of ['local-env.mjs', 'setup-local.mjs', 'dev-api.mjs', 'e2e-smoke.mjs', 'e2e-tuf-reconciliation.mjs', 'e2e-tuf-evidence.mjs', 'e2e-proposal-execution.mjs', 'import-tuf.mjs']) {
   await readFile(new URL(`./${script}`, import.meta.url), 'utf8')
 }
 
@@ -118,3 +143,4 @@ console.log('human vote evidence: 5-step lean (-2..2), not a 100-step official s
 console.log('TUF import: stable two-pass RECENT_ASC pagination; external observations only')
 console.log('TUF reconciliation: explicit Level/Version link; no canonical mutation; remap/SHA conflict guards')
 console.log('TUF evidence: latest linked rating comparison -> human RERATE proposal; canonical tables remain untouched')
+console.log('proposal execution: approved RERATE is atomic; baseline/version guarded; stale References -> NEEDS_REVIEW')
