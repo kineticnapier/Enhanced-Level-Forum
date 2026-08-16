@@ -1,5 +1,7 @@
 # Cloudflare production deployment
 
+[日本語](../DEPLOY.md) | **English**
+
 ELF production consists of three Cloudflare Workers plus an external PostgreSQL database. A purchased/custom domain is **not required** for the initial deployment.
 
 The default deployment mode uses the account's `workers.dev` subdomain:
