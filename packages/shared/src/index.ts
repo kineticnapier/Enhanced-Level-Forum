@@ -22,6 +22,40 @@ export type ProposalExecutionState = (typeof PROPOSAL_EXECUTION_STATES)[number]
 export const RATING_LEANS = [-2, -1, 0, 1, 2] as const
 export type RatingLean = (typeof RATING_LEANS)[number]
 
+export const RATING_QUEUE_STATUSES = ['OPEN', 'REVIEW_READY', 'CLOSED'] as const
+export type RatingQueueStatus = (typeof RATING_QUEUE_STATUSES)[number]
+
+export const RATING_QUEUE_CLAIM_STATUSES = ['ACTIVE', 'SUBMITTED', 'RELEASED'] as const
+export type RatingQueueClaimStatus = (typeof RATING_QUEUE_CLAIM_STATUSES)[number]
+
+export type RatingQueueReviewReason = 'NEED_MORE' | 'CONSENSUS' | 'DISAGREEMENT_NEEDS_ONE_MORE' | 'DISAGREEMENT'
+
+export interface RatingQueueItem {
+  id: string
+  levelId: string
+  levelVersionId: string
+  versionLabel: string
+  song: string
+  artist: string
+  creator: string
+  effecter: string | null
+  status: RatingQueueStatus
+  minVotes: number
+  maxVotes: number
+  priority: number
+  voteCount: number
+  activeClaimCount: number
+  myClaimStatus: RatingQueueClaimStatus | null
+  myVoteSubmitted: boolean
+  openedAt: string
+  reviewReadyAt: string | null
+  review: {
+    reason: RatingQueueReviewReason
+    candidate: { family: Family; tier: number } | null
+    spread: number | null
+  } | null
+}
+
 export const RATING_LEAN_LABELS: Record<RatingLean, string> = {
   [-2]: 'かなり下寄り',
   [-1]: 'やや下寄り',
