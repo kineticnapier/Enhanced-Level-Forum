@@ -23,7 +23,8 @@
     "import:tuf": "node scripts/import-tuf.mjs",
     "smoke": "node scripts/smoke.mjs",
     "test": "npm run build && npm run smoke",
-    "test:e2e": "node scripts/e2e-smoke.mjs"
+    "test:e2e": "node scripts/e2e-smoke.mjs && node scripts/e2e-tuf-reconciliation.mjs",
+    "test:e2e:reconciliation": "node scripts/e2e-tuf-reconciliation.mjs"
   },
   "devDependencies": {
     "typescript": "^5.8.0"
