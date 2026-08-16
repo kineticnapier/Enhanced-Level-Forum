@@ -19,7 +19,7 @@ function isStaff(user: SessionUser | null) {
 }
 
 function taskIdFromHash() {
-  const raw = (location.hash || '#/rating-queue').slice(1).split('?')[0]
+  const raw = (location.hash || '#/rating-queue').slice(1).split('?')[0] ?? ''
   const parts = raw.split('/').filter(Boolean)
   return parts[0] === 'rating-queue' && parts[1] ? parts[1] : null
 }
