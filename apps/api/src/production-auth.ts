@@ -104,9 +104,8 @@ async function ensureAdminCanBeRemoved(db: DbClient, target: any, removingAdmin:
 }
 
 export function registerProductionAuth(app: Hono<AppBindings>) {
-  // This middleware is registered before the legacy/core routes. It therefore
-  // supplies CORS and browser-origin CSRF protection to both the hardened auth
-  // routes below and the rest of the API mounted afterward.
+  // Registered before the legacy/core routes. This supplies CORS and
+  // browser-origin CSRF protection to the entire mounted API.
   app.use('*', async (c, next) => {
     const origin = c.req.header('Origin')
     const allowed = allowedOrigin(c.env, origin)
@@ -141,8 +140,8 @@ export function registerProductionAuth(app: Hono<AppBindings>) {
     if (isProduction(c.env)) c.header('Strict-Transport-Security', 'max-age=31536000')
   })
 
-  // Registered before coreApp, so this hardened handler supersedes the old
-  // development bootstrap login route without changing compatibility routes.
+  // Supersedes the old development bootstrap login route without changing the
+  // compatibility API surface.
   app.post('/api/auth/login', async (c) => {
     const body = await c.req.json<{ email?: string; password?: string }>().catch((): { email?: string; password?: string } => ({}))
     const email = normalizedEmail(body.email)
@@ -264,9 +263,8 @@ export function registerProductionAuth(app: Hono<AppBindings>) {
     return c.json({ ok: true, otherSessionsRevoked: true })
   })
 
-  // Harden the existing ADMIN user-management surface. These exact routes are
-  // registered before coreApp, so callers keep the same URLs while receiving
-  // active-account, last-admin and session-revocation guarantees.
+  // Harden the existing ADMIN user-management surface. Exact routes are
+  // registered before coreApp, so existing clients keep the same URLs.
   app.get('/api/admin/users', loadUser, requireRole('ADMIN'), async (c) => {
     const users = await withDb(c.env, async (db) => {
       const result = await db.query(
@@ -274,10 +272,10 @@ export function registerProductionAuth(app: Hono<AppBindings>) {
          FROM users ORDER BY created_at`,
       )
       return result.rows.map((row) => ({
-        id: row.id,
-        email: row.email,
+        // Keep the legacy snake_case fields used by the current Admin UI while
+        // also exposing explicit camelCase fields for new callers.
+        ...row,
         displayName: row.display_name,
-        role: row.role,
         isActive: row.is_active,
         passwordChangedAt: row.password_changed_at,
         lastLoginAt: row.last_login_at,
