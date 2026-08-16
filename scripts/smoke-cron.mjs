@@ -53,7 +53,8 @@ for (const invariant of ['last_run_at', 'last_status', 'last_reason', 'last_snap
 }
 
 for (const invariant of [
-  "app.get('/api/admin/imports/tuf/cron-status'",
+  "import { loadUser, requireRole, type AppBindings } from './auth'",
+  "app.get('/api/admin/imports/tuf/cron-status', loadUser, requireRole('REFERENCE_MANAGER')",
   "const CRON_SCHEDULE = '*/30 * * * *'",
   'trackingAvailable',
   "return 'STALE'",
