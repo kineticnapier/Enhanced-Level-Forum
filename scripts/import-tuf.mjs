@@ -1,8 +1,11 @@
+import http from 'node:http'
+import https from 'node:https'
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { parseEnvText, ROOT_DIR } from './local-env.mjs'
 
 const apiBase = (process.env.ELF_API_URL?.trim() || 'http://localhost:8787/api').replace(/\/$/, '')
+const IMPORT_REQUEST_TIMEOUT_MS = 20 * 60 * 1000
 
 let devVars = {}
 try {
@@ -25,6 +28,59 @@ async function jsonResponse(response) {
     throw new Error(body?.error ?? `${response.status} ${response.statusText}`)
   }
   return body
+}
+
+function longJsonRequest(urlText, { method = 'GET', headers = {}, body } = {}) {
+  const url = new URL(urlText)
+  const transport = url.protocol === 'https:' ? https : url.protocol === 'http:' ? http : null
+  if (!transport) throw new Error(`Unsupported ELF API protocol: ${url.protocol}`)
+
+  const payload = body === undefined ? null : JSON.stringify(body)
+  const requestHeaders = {
+    Accept: 'application/json',
+    ...headers,
+  }
+  if (payload !== null) {
+    requestHeaders['Content-Type'] = 'application/json'
+    requestHeaders['Content-Length'] = Buffer.byteLength(payload)
+  }
+
+  return new Promise((resolveRequest, rejectRequest) => {
+    const request = transport.request(url, { method, headers: requestHeaders }, (response) => {
+      let raw = ''
+      response.setEncoding('utf8')
+      response.on('data', (chunk) => { raw += chunk })
+      response.on('error', rejectRequest)
+      response.on('end', () => {
+        let parsed = null
+        if (raw) {
+          try {
+            parsed = JSON.parse(raw)
+          } catch {
+            rejectRequest(new Error(`ELF API returned non-JSON data (${response.statusCode ?? 'unknown status'})`))
+            return
+          }
+        }
+
+        const status = response.statusCode ?? 0
+        if (status < 200 || status >= 300) {
+          rejectRequest(new Error(parsed?.error ?? `${status} ${response.statusMessage ?? ''}`.trim()))
+          return
+        }
+        resolveRequest(parsed)
+      })
+    })
+
+    // Node's fetch/undici imposes a response-header timeout. A consistency-checked
+    // TUF import intentionally performs multiple complete scans before the ELF API
+    // sends its response, so use the core HTTP client with an explicit long timeout.
+    request.setTimeout(IMPORT_REQUEST_TIMEOUT_MS, () => {
+      request.destroy(new Error('ELF API import request timed out after 20 minutes'))
+    })
+    request.on('error', rejectRequest)
+    if (payload !== null) request.write(payload)
+    request.end()
+  })
 }
 
 const login = await fetch(`${apiBase}/auth/login`, {
@@ -51,15 +107,11 @@ if (fixturePath) {
   console.log('Level pagination is accepted only after two consecutive stable ID scans.')
 }
 
-const imported = await fetch(`${apiBase}/admin/imports/tuf`, {
+const result = await longJsonRequest(`${apiBase}/admin/imports/tuf`, {
   method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-    Cookie: cookie,
-  },
-  body: JSON.stringify(requestBody),
+  headers: { Cookie: cookie },
+  body: requestBody,
 })
-const result = await jsonResponse(imported)
 
 console.log('\nTUF import complete')
 console.log(`snapshot: ${result.snapshot.id}`)
