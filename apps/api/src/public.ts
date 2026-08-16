@@ -413,7 +413,7 @@ export function registerPublicRoutes(app: Hono<AppBindings>) {
 
   app.post('/api/governance/proposals/:id/vote', requireRole('VIEWER'), async (c) => {
     const user = c.get('user')!
-    const body = await c.req.json<{ vote?: string }>().catch(() => ({}))
+    const body = await c.req.json<{ vote?: string }>().catch((): { vote?: string } => ({}))
     if (!body.vote || !PROPOSAL_VOTES.has(body.vote)) return c.json({ error: 'Invalid vote' }, 400)
     const result = await withDb(c.env, async (db) => {
       const proposal = await db.query('SELECT status FROM proposals WHERE id=$1', [c.req.param('id')])
@@ -435,7 +435,7 @@ export function registerPublicRoutes(app: Hono<AppBindings>) {
 
   app.post('/api/governance/proposals/:id/comments', requireRole('VIEWER'), async (c) => {
     const user = c.get('user')!
-    const body = await c.req.json<{ body?: string }>().catch(() => ({}))
+    const body = await c.req.json<{ body?: string }>().catch((): { body?: string } => ({}))
     const text = body.body?.trim() ?? ''
     if (!text || text.length > 4000) return c.json({ error: 'Comment must be 1 to 4000 characters' }, 400)
     const comment = await withDb(c.env, async (db) => {
