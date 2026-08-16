@@ -73,7 +73,12 @@ function validateSameSiteOrigins(publicOrigin, adminOrigin, apiOrigin) {
 
 export async function loadProductionConfig({ requireHyperdrive = false, requireSecrets = false, requireAdmin = false } = {}) {
   const fileEnv = await readProductionFile()
-  const deployMode = (value(fileEnv, 'ELF_DEPLOY_MODE') || 'workers_dev').toLowerCase()
+  const explicitPublicOrigin = value(fileEnv, 'ELF_PUBLIC_ORIGIN')
+  const explicitAdminOrigin = value(fileEnv, 'ELF_ADMIN_ORIGIN')
+  const explicitApiOrigin = value(fileEnv, 'ELF_API_ORIGIN')
+  const configuredMode = value(fileEnv, 'ELF_DEPLOY_MODE').toLowerCase()
+  const legacyCustomDomainConfig = explicitPublicOrigin && explicitAdminOrigin && explicitApiOrigin
+  const deployMode = configuredMode || (legacyCustomDomainConfig ? 'custom_domain' : 'workers_dev')
   if (!DEPLOY_MODES.has(deployMode)) throw new Error('ELF_DEPLOY_MODE must be "workers_dev" or "custom_domain".')
 
   let workersDevSubdomain = ''
@@ -86,9 +91,9 @@ export async function loadProductionConfig({ requireHyperdrive = false, requireS
     ;({ publicOrigin, adminOrigin, apiOrigin } = workersDevOrigins(workersDevSubdomain))
 
     const explicit = {
-      ELF_PUBLIC_ORIGIN: value(fileEnv, 'ELF_PUBLIC_ORIGIN'),
-      ELF_ADMIN_ORIGIN: value(fileEnv, 'ELF_ADMIN_ORIGIN'),
-      ELF_API_ORIGIN: value(fileEnv, 'ELF_API_ORIGIN'),
+      ELF_PUBLIC_ORIGIN: explicitPublicOrigin,
+      ELF_ADMIN_ORIGIN: explicitAdminOrigin,
+      ELF_API_ORIGIN: explicitApiOrigin,
     }
     const expected = {
       ELF_PUBLIC_ORIGIN: publicOrigin,
@@ -101,9 +106,9 @@ export async function loadProductionConfig({ requireHyperdrive = false, requireS
       }
     }
   } else {
-    publicOrigin = productionOrigin(value(fileEnv, 'ELF_PUBLIC_ORIGIN'), 'ELF_PUBLIC_ORIGIN')
-    adminOrigin = productionOrigin(value(fileEnv, 'ELF_ADMIN_ORIGIN'), 'ELF_ADMIN_ORIGIN')
-    apiOrigin = productionOrigin(value(fileEnv, 'ELF_API_ORIGIN'), 'ELF_API_ORIGIN')
+    publicOrigin = productionOrigin(explicitPublicOrigin, 'ELF_PUBLIC_ORIGIN')
+    adminOrigin = productionOrigin(explicitAdminOrigin, 'ELF_ADMIN_ORIGIN')
+    apiOrigin = productionOrigin(explicitApiOrigin, 'ELF_API_ORIGIN')
   }
 
   validateSameSiteOrigins(publicOrigin, adminOrigin, apiOrigin)
