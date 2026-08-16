@@ -15,6 +15,7 @@ for (const table of ['external_level_observations', 'external_reference_observat
 const shared = await readFile(new URL('../packages/shared/src/index.ts', import.meta.url), 'utf8')
 if (!shared.includes('voteEvidenceScore')) throw new Error('shared rating semantics missing')
 if (!shared.includes("['P', 'G', 'U']")) throw new Error('PGU families missing')
+if (!shared.includes('levelVersionId: string') || !shared.includes('notes: string | null')) throw new Error('LevelDetail Reference baseline fields missing')
 
 const api = await readFile(new URL('../apps/api/src/index.ts', import.meta.url), 'utf8')
 for (const route of ['/api/levels', '/api/references', '/api/proposals', '/api/admin/levels', '/api/admin/references']) {
@@ -24,6 +25,9 @@ if (!api.includes("version: '0.3.0'")) throw new Error('API version mismatch')
 if (!api.includes('decideProposal') || !api.includes('ProposalDecisionError')) {
   throw new Error('admin proposal decision route is not using transactional proposal execution')
 }
+if (!api.includes('prepareReferenceProposalPayload') || !api.includes('ReferenceProposalError')) {
+  throw new Error('public Reference proposals must capture authoritative baselines at creation')
+}
 
 const services = await readFile(new URL('../apps/api/src/services.ts', import.meta.url), 'utf8')
 if (!services.includes('publishCanonicalRatingInTransaction')) {
@@ -32,24 +36,45 @@ if (!services.includes('publishCanonicalRatingInTransaction')) {
 
 const proposalExecution = await readFile(new URL('../apps/api/src/proposals/execution.ts', import.meta.url), 'utf8')
 for (const invariant of [
-  "proposal.type !== 'RERATE'",
   'FOR UPDATE',
   'currentCanonicalRating',
   'targetLevelVersionId',
   'proposedRating',
   'Proposal baseline is stale',
   'publishCanonicalRatingInTransaction',
+  'REFERENCE_PROPOSAL_TYPES',
+  'executeReferenceProposalInTransaction',
   'PROPOSAL_EXECUTION',
 ]) {
   if (!proposalExecution.includes(invariant)) throw new Error(`proposal execution invariant missing: ${invariant}`)
 }
-if (!proposalExecution.includes("status: 'STATUS_ONLY'" ) && !proposalExecution.includes("execution: 'STATUS_ONLY'")) {
-  throw new Error('non-RERATE proposal decisions must remain explicit status-only decisions')
+if (!proposalExecution.includes("execution: 'STATUS_ONLY'")) {
+  throw new Error('non-executable proposal decisions must remain explicit status-only decisions')
+}
+
+const referenceProposals = await readFile(new URL('../apps/api/src/proposals/references.ts', import.meta.url), 'utf8')
+for (const invariant of [
+  'prepareReferenceProposalPayload',
+  'currentCanonicalRating',
+  'baselineReference',
+  'Reference proposal baseline is stale',
+  'PROPOSAL_ADD',
+  'PROPOSAL_MOVE',
+  'PROPOSAL_REMOVE',
+  'ON CONFLICT DO NOTHING',
+]) {
+  if (!referenceProposals.includes(invariant)) throw new Error(`Reference proposal invariant missing: ${invariant}`)
+}
+for (const forbiddenMutation of ['INSERT INTO canonical_ratings','UPDATE canonical_ratings','DELETE FROM canonical_ratings']) {
+  if (referenceProposals.includes(forbiddenMutation)) throw new Error(`Reference proposal execution must not mutate canonical rating: ${forbiddenMutation}`)
 }
 
 const entry = await readFile(new URL('../apps/api/src/entry.ts', import.meta.url), 'utf8')
-for (const route of ["'/api/admin/imports/tuf'", "'/api/admin/imports/tuf/issues'", "'/api/admin/imports/tuf/unlinked'", "'/api/admin/imports/tuf/link'", "'/api/admin/imports/tuf/evidence'", "'/api/admin/imports/tuf/proposals'"]) {
+for (const route of ["'/api/admin/imports/tuf'", "'/api/admin/imports/tuf/issues'", "'/api/admin/imports/tuf/unlinked'", "'/api/admin/imports/tuf/link'", "'/api/admin/imports/tuf/create-level'", "'/api/admin/imports/tuf/evidence'", "'/api/admin/imports/tuf/proposals'"]) {
   if (!entry.includes(route)) throw new Error(`TUF route missing: ${route}`)
+}
+if (!entry.includes("requireRole('MODERATOR')") || !entry.includes('createLevelFromTufObservation')) {
+  throw new Error('TUF create-level route must require MODERATOR and use reconciliation service')
 }
 if (!entry.includes('fetchConsistentTufSnapshot')) throw new Error('TUF import route is not using consistent pagination fetch')
 
@@ -79,17 +104,20 @@ if (!tufImporter.includes("severity: 'INFO', kind: 'MISSING_REFERENCE_TYPE'")) {
 }
 
 const tufReconciliation = await readFile(new URL('../apps/api/src/reconciliation/tuf.ts', import.meta.url), 'utf8')
-for (const invariant of ['external_level_ids', 'external_level_observations', 'external_rating_observations', 'external_reference_observations', 'TUF_MANUAL_LINK']) {
+for (const invariant of ['external_level_ids', 'external_level_observations', 'external_rating_observations', 'external_reference_observations', 'TUF_MANUAL_LINK', 'TUF_CREATE_LEVEL', 'linkTufObservationInTransaction', 'canonicalRatingCreated: false']) {
   if (!tufReconciliation.includes(invariant)) throw new Error(`TUF reconciliation invariant missing: ${invariant}`)
 }
 if (tufReconciliation.includes('canonical_ratings') || tufReconciliation.includes('difficulty_references')) {
-  throw new Error('TUF reconciliation must not mutate canonical ELF rating/reference tables')
+  throw new Error('TUF reconciliation/create-level must not mutate canonical ELF rating/reference tables')
 }
 if (!tufReconciliation.includes('already mapped to a different ELF level')) {
   throw new Error('TUF manual linking must reject silent external-ID remaps')
 }
 if (!tufReconciliation.includes('conflicts with the selected ELF version SHA-256')) {
   throw new Error('TUF manual Version linking must reject known SHA conflicts')
+}
+if (!tufReconciliation.includes('Created') && !tufReconciliation.includes('INSERT INTO levels')) {
+  throw new Error('TUF reconciliation must be able to create an ELF Level')
 }
 
 const tufEvidence = await readFile(new URL('../apps/api/src/evidence/tuf.ts', import.meta.url), 'utf8')
@@ -125,14 +153,20 @@ const adminReconciliation = await readFile(new URL('../apps/admin/src/TufReconci
 const adminEvidence = await readFile(new URL('../apps/admin/src/TufEvidenceProposals.tsx', import.meta.url), 'utf8')
 if (web.includes('AdoForum') || admin.includes('AdoForum')) throw new Error('legacy AdoForum branding remains in UI')
 if (!web.includes('Enhanced Level Forum') || !admin.includes('Enhanced Level Forum')) throw new Error('ELF branding missing')
+if (!web.includes("type==='REFERENCE_ADD'") || !web.includes("type==='REFERENCE_MOVE'") || !web.includes("type==='REFERENCE_REMOVE'")) {
+  throw new Error('public proposal UI must build executable Reference proposal payloads')
+}
 if (!admin.includes('TufReconciliation') || !adminReconciliation.includes('/admin/imports/tuf/unlinked') || !adminReconciliation.includes('/admin/imports/tuf/link')) {
   throw new Error('TUF reconciliation admin UI is not wired')
+}
+if (!adminReconciliation.includes('/admin/imports/tuf/create-level') || !adminReconciliation.includes('Create ELF Level & link') || !admin.includes('canCreateLevel')) {
+  throw new Error('TUF create-level admin workflow is not wired with role gating')
 }
 if (!adminReconciliation.includes('TufEvidenceProposals') || !adminEvidence.includes('/admin/imports/tuf/evidence') || !adminEvidence.includes('/admin/imports/tuf/proposals')) {
   throw new Error('TUF evidence proposal admin UI is not wired')
 }
 
-for (const script of ['local-env.mjs', 'setup-local.mjs', 'dev-api.mjs', 'e2e-smoke.mjs', 'e2e-tuf-reconciliation.mjs', 'e2e-tuf-evidence.mjs', 'e2e-proposal-execution.mjs', 'import-tuf.mjs']) {
+for (const script of ['local-env.mjs', 'setup-local.mjs', 'dev-api.mjs', 'e2e-smoke.mjs', 'e2e-tuf-reconciliation.mjs', 'e2e-tuf-evidence.mjs', 'e2e-proposal-execution.mjs', 'e2e-reference-proposals.mjs', 'e2e-tuf-create-level.mjs', 'import-tuf.mjs']) {
   await readFile(new URL(`./${script}`, import.meta.url), 'utf8')
 }
 
@@ -141,6 +175,7 @@ console.log(`migrations: ${migrationFiles.join(', ')}`)
 console.log('canonical difficulty: integer P/G/U tier')
 console.log('human vote evidence: 5-step lean (-2..2), not a 100-step official scale')
 console.log('TUF import: stable two-pass RECENT_ASC pagination; external observations only')
-console.log('TUF reconciliation: explicit Level/Version link; no canonical mutation; remap/SHA conflict guards')
+console.log('TUF reconciliation: existing links + create editable ELF Level/Version; canonical remains Unrated')
 console.log('TUF evidence: latest linked rating comparison -> human RERATE proposal; canonical tables remain untouched')
 console.log('proposal execution: approved RERATE is atomic; baseline/version guarded; stale References -> NEEDS_REVIEW')
+console.log('Reference proposals: ADD/MOVE/REMOVE capture baselines, stale-guard, execute atomically, and preserve history')
