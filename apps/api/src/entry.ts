@@ -8,6 +8,7 @@ import { fetchConsistentTufSnapshot } from './importers/tuf-fetch'
 import { registerLevelMetadataCatalogRoutes, registerLevelMetadataRoutes } from './level-metadata'
 import { registerProductionAuth } from './production-auth'
 import { registerPublicRoutes } from './public'
+import { registerRatingQueueRoutes } from './rating-queue'
 import { createLevelFromTufObservation, linkTufObservation, listTufUnlinked, TufReconciliationError } from './reconciliation/tuf'
 
 type TufImportBody = { rawData?: TufRawSnapshot; sourceVersion?: string | null }
@@ -30,12 +31,13 @@ type TufCreateLevelBody = {
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
 // Production security/auth routes are deliberately registered first. The
-// practical Level metadata compatibility layer is next so it can replace the
-// original v0.3 Level CRUD without removing old core routes. The core app then
-// remains available for rating, Reference, proposal, and compatibility APIs.
+// practical Level metadata compatibility layer and queue-aware rating routes
+// are next so they can replace the original v0.3 CRUD/vote handlers without
+// removing old compatibility APIs.
 const app = new Hono<AppBindings>()
 registerProductionAuth(app)
 registerLevelMetadataRoutes(app)
+registerRatingQueueRoutes(app)
 app.route('/', coreApp)
 registerLevelMetadataCatalogRoutes(app)
 registerPublicRoutes(app)
