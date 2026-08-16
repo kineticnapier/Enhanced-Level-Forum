@@ -1,12 +1,14 @@
 import app from './index'
 import { requireRole } from './auth'
 import { withDb } from './db'
+import { createTufRerateProposal, listTufEvidence, TufEvidenceError } from './evidence/tuf'
 import { importTufSnapshot, type TufRawSnapshot } from './importers/tuf'
 import { fetchConsistentTufSnapshot } from './importers/tuf-fetch'
 import { linkTufObservation, listTufUnlinked, TufReconciliationError } from './reconciliation/tuf'
 
 type TufImportBody = { rawData?: TufRawSnapshot; sourceVersion?: string | null }
 type TufLinkBody = { observationId?: string; levelId?: string; levelVersionId?: string | null }
+type TufProposalBody = { observationId?: string; reason?: string | null }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
@@ -67,6 +69,50 @@ app.post('/api/admin/imports/tuf/link', requireRole('REFERENCE_MANAGER'), async 
     return c.json(result)
   } catch (error) {
     if (error instanceof TufReconciliationError) return c.json({ error: error.message }, error.status)
+    throw error
+  }
+})
+
+app.get('/api/admin/imports/tuf/evidence', requireRole('REFERENCE_MANAGER'), async (c) => {
+  const snapshotId = c.req.query('snapshotId')?.trim() || null
+  if (snapshotId && !UUID_RE.test(snapshotId)) return c.json({ error: 'Invalid snapshotId' }, 400)
+
+  const rawLimit = Number(c.req.query('limit') ?? 50)
+  const rawOffset = Number(c.req.query('offset') ?? 0)
+  const limit = Number.isFinite(rawLimit) ? Math.trunc(rawLimit) : 50
+  const offset = Number.isFinite(rawOffset) ? Math.trunc(rawOffset) : 0
+  const actionableOnly = c.req.query('actionableOnly') === 'true'
+
+  try {
+    const result = await withDb(c.env, (db) => listTufEvidence(db, {
+      snapshotId,
+      search: c.req.query('search') ?? '',
+      limit,
+      offset,
+      actionableOnly,
+    }))
+    return c.json(result)
+  } catch (error) {
+    if (error instanceof TufEvidenceError) return c.json({ error: error.message }, error.status)
+    throw error
+  }
+})
+
+app.post('/api/admin/imports/tuf/proposals', requireRole('REFERENCE_MANAGER'), async (c) => {
+  const user = c.get('user')!
+  const body = await c.req.json<TufProposalBody>().catch((): TufProposalBody => ({}))
+  const observationId = body.observationId?.trim() ?? ''
+  if (!UUID_RE.test(observationId)) return c.json({ error: 'observationId must be a UUID' }, 400)
+
+  try {
+    const result = await withDb(c.env, (db) => createTufRerateProposal(db, {
+      observationId,
+      actorId: user.id,
+      reason: body.reason ?? null,
+    }))
+    return c.json(result, 201)
+  } catch (error) {
+    if (error instanceof TufEvidenceError) return c.json({ error: error.message }, error.status)
     throw error
   }
 })
