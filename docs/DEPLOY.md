@@ -1,61 +1,63 @@
-# Cloudflare production deployment
+# Cloudflare 本番デプロイ
 
-ELF production consists of three Cloudflare Workers plus an external PostgreSQL database. A purchased/custom domain is **not required** for the initial deployment.
+[English](en/DEPLOY.md)
 
-The default deployment mode uses the account's `workers.dev` subdomain:
+ELF本番環境は3つのCloudflare Workersと外部PostgreSQLで構成します。初回デプロイに購入済みの独自ドメインは**不要**です。
+
+既定はCloudflareアカウントの `workers.dev` サブドメインを使います。
 
 ```text
-enhanced-level-forum-web.<account>.workers.dev    -> public React SPA
-enhanced-level-forum-admin.<account>.workers.dev  -> staff React SPA
+enhanced-level-forum-web.<account>.workers.dev    -> 公開 React SPA
+enhanced-level-forum-admin.<account>.workers.dev  -> 運営 React SPA
 enhanced-level-forum-api.<account>.workers.dev    -> Hono API Worker
                                                        |
                                                        v
                                                Hyperdrive -> PostgreSQL
 ```
 
-Later, the same deployment can be moved to custom sibling domains without recreating the database or Hyperdrive.
+後からDBやHyperdriveを作り直さず、同じ環境を独自の兄弟ドメインへ移行できます。
 
-The deployment tooling keeps the database credentials, rate-limit salt, initial ADMIN password, and generated Wrangler configs out of Git.
+デプロイ用ツールはDB認証情報、ログイン制限salt、初期ADMINパスワード、生成Wrangler設定をGit管理外にします。
 
-## Requirements
+## 必要なもの
 
 - Node.js 20+
-- npm dependencies installed
-- a Cloudflare account with Workers enabled
-- Wrangler authenticated to that account
-- a remotely reachable PostgreSQL database supported by Hyperdrive
-- the account's `workers.dev` subdomain label for the default mode
+- `npm install` 済み
+- Workersが有効なCloudflareアカウント
+- そのアカウントで認証済みのWrangler
+- Hyperdriveから到達可能なPostgreSQL
+- 既定モードではアカウントの `workers.dev` サブドメイン名
 
-Cloudflare assigns each Worker a URL of the form `<worker-name>.<account-subdomain>.workers.dev` when `workers_dev` is enabled. All three ELF Workers use fixed names, so their origins can be derived before deployment.
+`workers_dev` が有効なWorkerは `<worker-name>.<account-subdomain>.workers.dev` 形式になります。ELFの3つのWorker名は固定なので、デプロイ前にURLを決定できます。
 
-Production uses a host-only `__Host-elf_session` cookie with `SameSite=Lax`. Public/admin/API therefore remain sibling HTTPS hosts under the same site in both deployment modes.
+本番Cookieは host-only の `__Host-elf_session`, `SameSite=Lax` です。どちらのデプロイモードでも公開/管理/APIを同一site配下のHTTPS兄弟ホストにします。
 
-## 1. Create local production configuration
+## 1. ローカル本番設定を作る
 
-From the repository root:
+リポジトリ直下で:
 
 ```powershell
 Copy-Item .env.production.example .env.production
 ```
 
-For a domainless first deployment, edit `.env.production` like this:
+独自ドメインなしで開始する場合:
 
 ```dotenv
 ELF_DEPLOY_MODE=workers_dev
 ELF_WORKERS_DEV_SUBDOMAIN=your-account-subdomain
 
-# Leave these empty in workers_dev mode.
+# workers_dev モードでは空欄のまま。
 ELF_PUBLIC_ORIGIN=
 ELF_ADMIN_ORIGIN=
 ELF_API_ORIGIN=
 
 DATABASE_URL=postgres://USER:PASSWORD@HOST:5432/adoforum?sslmode=require
 
-# Empty on first setup; production:setup fills this after creating Hyperdrive.
+# 初回は空欄。production:setup が Hyperdrive 作成後に埋める。
 ELF_HYPERDRIVE_ID=
 ELF_HYPERDRIVE_NAME=enhanced-level-forum-db
 
-# 32+ characters; use a high-entropy random secret.
+# 32文字以上の高エントロピーなランダムsecret。
 AUTH_RATE_LIMIT_SALT=
 
 ELF_ADMIN_EMAIL=admin@example.com
@@ -63,51 +65,49 @@ ELF_ADMIN_NAME=ELF Administrator
 ELF_ADMIN_PASSWORD=
 ```
 
-If the Cloudflare dashboard shows the account URL as:
+CloudflareダッシュボードでアカウントURLが
 
 ```text
 https://hello.workers.dev
 ```
 
-then use:
+なら:
 
 ```dotenv
 ELF_WORKERS_DEV_SUBDOMAIN=hello
 ```
 
-The loader also accepts `hello.workers.dev` and normalizes it to the same account label.
+`hello.workers.dev` と書いても `hello` に正規化します。
 
-`.env.production` is gitignored. Do not commit it or copy its secret values into tracked Wrangler files.
+`.env.production` はgitignoredです。commitしたり、秘密値を追跡対象Wrangler設定へコピーしたりしないでください。
 
-## 2. First-time Cloudflare/database setup
-
-Run:
+## 2. 初回Cloudflare / DBセットアップ
 
 ```powershell
 npm run production:setup
 ```
 
-The command:
+このコマンドは:
 
-1. validates the deployment mode and derived/explicit origins;
-2. runs `wrangler whoami` so an account/login failure happens before database mutation;
-3. creates Hyperdrive when `ELF_HYPERDRIVE_ID` is empty;
-4. stores the returned Hyperdrive ID in the gitignored `.env.production`;
-5. applies all pending PostgreSQL migrations;
-6. creates the initial ADMIN when credentials are supplied;
-7. generates gitignored production Wrangler configs for API/public/admin.
+1. デプロイモードと算出/指定originを検証。
+2. DB変更前に `wrangler whoami` を実行し、アカウント/ログイン失敗を先に検出。
+3. `ELF_HYPERDRIVE_ID` が空ならHyperdriveを作成。
+4. 返されたIDをGit管理外の `.env.production` に保存。
+5. 未適用PostgreSQLマイグレーションを適用。
+6. 認証情報が指定されていれば初期ADMINを作成。
+7. API/公開/管理用の本番Wrangler設定を生成。
 
-In `workers_dev` mode, setup prints the three derived URLs. No Cloudflare DNS zone or purchased domain is required.
+`workers_dev` モードでは算出した3つのURLを表示します。Cloudflare DNS zoneや購入済みドメインは不要です。
 
-The PostgreSQL connection string is redacted from the setup command log. Wrangler still receives it directly for Hyperdrive creation.
+PostgreSQL接続文字列はセットアップログで伏字になります。Hyperdrive作成のためWranglerには直接渡されます。
 
-Production ignores `BOOTSTRAP_ADMIN_EMAIL` and `BOOTSTRAP_ADMIN_PASSWORD`; the initial ADMIN is created out-of-band in the database.
+本番は `BOOTSTRAP_ADMIN_EMAIL` / `BOOTSTRAP_ADMIN_PASSWORD` を無視し、初期ADMINはDBへ別経路で作ります。
 
-If Hyperdrive already exists, put its ID into `ELF_HYPERDRIVE_ID` before running setup and creation is skipped.
+既存Hyperdriveを使う場合は事前に `ELF_HYPERDRIVE_ID` を設定すると新規作成を飛ばします。
 
-## 3. Generated Wrangler configuration
+## 3. 生成されるWrangler設定
 
-`production:setup` and `production:deploy` generate:
+`production:setup` と `production:deploy` は次を生成します。
 
 ```text
 apps/api/wrangler.production.generated.json
@@ -115,47 +115,45 @@ apps/web/wrangler.production.generated.json
 apps/admin/wrangler.production.generated.json
 ```
 
-They are ignored by Git and recreated from `.env.production`.
+すべてGit管理外で、`.env.production` から再生成できます。
 
-### workers.dev mode
+### workers.dev モード
 
-For `ELF_DEPLOY_MODE=workers_dev`:
+`ELF_DEPLOY_MODE=workers_dev` の場合:
 
-- all three configs use `workers_dev=true`;
-- no Custom Domain `routes` are emitted;
-- Preview URLs are disabled separately with `preview_urls=false`;
-- API CORS origins are the derived public/admin `workers.dev` URLs;
-- frontends are built against the derived API `workers.dev` URL.
+- 3設定とも `workers_dev=true`
+- Custom Domain の `routes` は生成しない
+- Preview URLは `preview_urls=false` で無効化
+- API CORS originは算出した公開/管理 `workers.dev` URL
+- フロントエンドは算出したAPI `workers.dev` URL向けにビルド
 
-### Custom Domain mode
+### Custom Domain モード
 
-For `ELF_DEPLOY_MODE=custom_domain`:
+`ELF_DEPLOY_MODE=custom_domain` の場合:
 
-- `ELF_PUBLIC_ORIGIN`, `ELF_ADMIN_ORIGIN`, and `ELF_API_ORIGIN` are required;
-- they must be sibling HTTPS origins;
-- generated configs use Custom Domain routes;
-- `workers_dev=false` and `preview_urls=false`.
+- `ELF_PUBLIC_ORIGIN`, `ELF_ADMIN_ORIGIN`, `ELF_API_ORIGIN` が必須
+- 3つは同一siteのHTTPS兄弟originである必要がある
+- 生成設定はCustom Domain routeを使用
+- `workers_dev=false`, `preview_urls=false`
 
-The API config always includes `ENVIRONMENT=production`, the `HYPERDRIVE` binding, observability, and `AUTH_RATE_LIMIT_SALT` as a required secret. Frontend configs always use Workers Static Assets with SPA fallback.
+API設定には常に `ENVIRONMENT=production`, `HYPERDRIVE` binding, observability、および必須secret `AUTH_RATE_LIMIT_SALT` が入ります。フロントエンドは Workers Static Assets + SPA fallback です。
 
-## 4. Deploy all three Workers
-
-Run:
+## 4. 3つのWorkerをデプロイ
 
 ```powershell
 npm run production:deploy
 ```
 
-The deployment command:
+処理内容:
 
-1. validates `.env.production` and regenerates all production Wrangler configs;
-2. builds shared/API code;
-3. deploys the API with `AUTH_RATE_LIMIT_SALT` supplied through Wrangler's secrets-file mechanism;
-4. builds both React frontends with `VITE_API_URL=<ELF_API_ORIGIN>/api`;
-5. deploys public and admin Static Asset Workers;
-6. removes the temporary local Worker-secret file in a `finally` block.
+1. `.env.production` を検証し、本番Wrangler設定を再生成。
+2. shared/APIをビルド。
+3. Wranglerのsecrets-file経由で `AUTH_RATE_LIMIT_SALT` を渡してAPIをデプロイ。
+4. `VITE_API_URL=<ELF_API_ORIGIN>/api` で2つのReactフロントエンドをビルド。
+5. 公開/管理Static Asset Workerをデプロイ。
+6. 一時的なローカルWorker secretファイルを `finally` で削除。
 
-In workers.dev mode the resulting public URLs are deterministic from the Worker names and account subdomain, for example:
+workers.devモードのURL例:
 
 ```text
 https://enhanced-level-forum-web.hello.workers.dev
@@ -163,37 +161,33 @@ https://enhanced-level-forum-admin.hello.workers.dev
 https://enhanced-level-forum-api.hello.workers.dev
 ```
 
-## 5. Live production smoke test
-
-After deployment:
+## 5. 本番smoke test
 
 ```powershell
 npm run production:smoke
 ```
 
-The smoke test checks:
+確認内容:
 
-- API `/api/health` and database connectivity;
-- public and admin frontends return HTML;
-- the public Level catalog responds;
-- an untrusted browser Origin is rejected with 403;
-- both configured frontend origins receive credentialed CORS preflight responses;
-- when production ADMIN credentials remain present locally, login succeeds and the cookie is `__Host-elf_session; Secure; HttpOnly; SameSite=Lax; Path=/` with no `Domain` attribute;
-- authenticated `/api/auth/me` resolves as ADMIN.
+- API `/api/health` とDB接続
+- 公開/管理画面がHTMLを返す
+- 公開譜面カタログが応答
+- 信頼していないブラウザOriginを403で拒否
+- 設定した2つのフロントエンドoriginへcredentials付きCORS preflightを返す
+- ローカルに本番ADMIN認証情報が残っていればログインし、Cookieが `__Host-elf_session; Secure; HttpOnly; SameSite=Lax; Path=/` かつ `Domain` なしであること
+- `/api/auth/me` がADMINとして解決されること
 
-Expected final marker:
+最後に:
 
 ```text
 PRODUCTION DEPLOY SMOKE PASSED
 ```
 
-After smoke succeeds, remove `ELF_ADMIN_PASSWORD` from `.env.production` if it is no longer needed for repeated login smoke tests. The database contains only its password hash.
+成功後、繰り返しログインsmokeに不要なら `.env.production` から `ELF_ADMIN_PASSWORD` を削除してください。DBにはハッシュのみ保存されています。
 
-## 6. Move to a custom domain later
+## 6. 後から独自ドメインへ移行
 
-Buying a domain later does not require a new ELF database, a new ADMIN, or a new Hyperdrive configuration.
-
-Add the domain to the Cloudflare account, then change `.env.production`:
+新しいDB、ADMIN、Hyperdriveは不要です。Cloudflareアカウントにドメインを追加し、`.env.production` を変更します。
 
 ```dotenv
 ELF_DEPLOY_MODE=custom_domain
@@ -202,20 +196,20 @@ ELF_ADMIN_ORIGIN=https://admin.example.com
 ELF_API_ORIGIN=https://api.example.com
 ```
 
-Keep the existing `DATABASE_URL`, `ELF_HYPERDRIVE_ID`, and secrets, then run:
+既存の `DATABASE_URL`, `ELF_HYPERDRIVE_ID`, secrets は維持し:
 
 ```powershell
 npm run production:deploy
 npm run production:smoke
 ```
 
-The generated Wrangler configs will switch from `workers_dev=true` with no routes to Custom Domain routes with `workers_dev=false`.
+生成Wrangler設定が `workers_dev=true` / routeなしから、Custom Domain route / `workers_dev=false` へ切り替わります。
 
-Do not leave old `workers.dev` origins in the frontend build manually; `production:deploy` rebuilds both frontends against the new API origin.
+古い `workers.dev` originを手動でフロントエンドに残さないでください。`production:deploy` が新しいAPI origin向けに再ビルドします。
 
-## 7. Re-deployment
+## 7. 再デプロイ
 
-Normal code deployments do not recreate Hyperdrive or the ADMIN:
+通常のコード更新ではHyperdriveやADMINを作り直しません。
 
 ```powershell
 git pull
@@ -225,7 +219,7 @@ npm run production:deploy
 npm run production:smoke
 ```
 
-If a new DB migration was added, run it against production before deploying code that requires it:
+新しいDBマイグレーションがある場合は、それを必要とするコードより先に本番DBへ適用します。
 
 ```powershell
 $env:DATABASE_URL="<production connection string>"
@@ -233,61 +227,57 @@ npm run db:migrate
 Remove-Item Env:DATABASE_URL
 ```
 
-Alternatively, rerunning `npm run production:setup` is idempotent for already-applied migrations and an already-existing active ADMIN.
+または `npm run production:setup` を再実行できます。適用済みマイグレーション・既存の有効ADMINについては冪等です。
 
-## 8. Cloudflare Access for admin
+## 8. 管理画面へのCloudflare Access
 
-A custom-domain admin frontend may additionally be protected with Cloudflare Access. This is defense-in-depth only: the API continues to enforce ELF roles and must not rely on Access as application authorization.
+独自ドメインの管理画面はCloudflare Accessで追加保護できます。ただし多層防御にすぎず、APIは引き続きELFのロールを検証します。Accessをアプリの認可として扱わないでください。
 
-## 9. Failure/recovery notes
+## 9. 失敗時の確認
 
-### I do not own a domain
-
-Use the default:
+### ドメインを持っていない
 
 ```dotenv
 ELF_DEPLOY_MODE=workers_dev
 ELF_WORKERS_DEV_SUBDOMAIN=<your Cloudflare account subdomain>
 ```
 
-No Custom Domain route is generated.
+Custom Domain routeは生成されません。
 
-### Hyperdrive creation succeeded but ID parsing failed
+### Hyperdrive作成後にID解析だけ失敗した
 
-The setup command prints Wrangler's output. Copy the returned Hyperdrive ID into:
+Wrangler出力にあるIDを:
 
 ```dotenv
 ELF_HYPERDRIVE_ID=<id>
 ```
 
-Then rerun `npm run production:setup`. It will not create another Hyperdrive.
+へ入れ `npm run production:setup` を再実行します。別のHyperdriveは作りません。
 
-### workers.dev deploy URL is wrong
+### workers.dev のURLが違う
 
-Check the account's Workers & Pages subdomain. `ELF_WORKERS_DEV_SUBDOMAIN` is the account label only, not a Worker name. For `hello.workers.dev`, use `hello`.
+アカウントの Workers & Pages サブドメインを確認します。`ELF_WORKERS_DEV_SUBDOMAIN` はWorker名ではなくアカウントラベルです。`hello.workers.dev` なら `hello` を使います。ELFのWorker名は自動で前置されます。
 
-The Worker names are fixed by ELF and are prepended automatically.
+### Custom Domainデプロイが失敗する
 
-### Custom Domain deploy fails
+`ELF_DEPLOY_MODE=custom_domain` と、3つのホスト名が認証中Wranglerアカウントから利用できるCloudflare zoneに属することを確認します。
 
-Confirm `ELF_DEPLOY_MODE=custom_domain` and that all three hostnames belong to a Cloudflare zone available to the authenticated Wrangler account.
+### APIデプロイは成功したがブラウザログインできない
 
-### API deploy succeeds but browser login fails
+次を確認します。
 
-Check that:
+- 3 URLがすべてHTTPSで同一siteの兄弟ホスト
+- フロントエンドが古いローカルビルドではなく `production:deploy` で作られたもの
+- `AUTH_RATE_LIMIT_SALT` がアップロード済み
+- `/api/health` が `database:true`
+- workers.devモードなら3 Workerが同じアカウントサブドメイン
 
-- all three derived/explicit URLs are HTTPS and sibling same-site hosts;
-- the frontend was built by `production:deploy`, not an older local build;
-- `AUTH_RATE_LIMIT_SALT` was uploaded;
-- `/api/health` reports `database:true`;
-- in workers.dev mode, all three Workers use the same account subdomain.
+### DBマイグレーションが失敗する
 
-### Database migration fails
+成功するまでAPIをデプロイしないでください。本番 `DATABASE_URL` を直し、`production:setup` または `db:migrate` を再実行してからデプロイします。
 
-Do not deploy the API until the migration succeeds. Fix the production `DATABASE_URL`, rerun `npm run production:setup` or `npm run db:migrate`, and then deploy.
+## ローカル開発は別設定
 
-## Local development remains separate
+追跡対象の `apps/*/wrangler.jsonc` はローカル開発向けのままです。`dev:api`, `dev:web`, `dev:admin` は localhost設定を使います。本番コマンドだけが生成済み `wrangler.production.generated.json` を使います。
 
-The checked-in `apps/*/wrangler.jsonc` files remain development-oriented. `npm run dev:api`, `npm run dev:web`, and `npm run dev:admin` continue to use localhost configuration. Production commands use only the generated `wrangler.production.generated.json` files.
-
-Do not replace the local Hyperdrive placeholder with a production ID in the tracked development config.
+追跡対象の開発設定に本番Hyperdrive IDを入れないでください。

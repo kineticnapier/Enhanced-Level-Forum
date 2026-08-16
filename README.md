@@ -1,47 +1,58 @@
 # Enhanced Level Forum (ELF)
 
-Current development version: **v0.3.0**
+**日本語** | [English](README.en.md)
 
-Enhanced Level Forum is an ADOFAI difficulty forum/database built around versioned level data, auditable rating history, rerating proposals, and reviewable References.
+現在の開発バージョン: **v0.3.0**
+
+Enhanced Level Forum は、ADOFAI の難易度を扱うフォーラム兼データベースです。譜面を版ごとに管理し、確定難易度の履歴、難易度変更の提案、再検討可能な基準譜面（Reference）を記録します。
 
 ```text
-forum.example.com  -> apps/web    React/Vite public frontend
-admin.example.com  -> apps/admin  React/Vite staff frontend
+forum.example.com  -> apps/web    React/Vite 公開画面
+admin.example.com  -> apps/admin  React/Vite 管理画面
 api.example.com    -> apps/api    Hono Cloudflare Worker
                                       |
                                       v
                                Hyperdrive -> PostgreSQL
 ```
 
-PostgreSQL is the source of truth. The frontends are disposable static deployments; the API is the only writer.
+PostgreSQL が正本です。フロントエンドは再生成可能な静的デプロイで、データを書き込むのは API のみです。
 
-## Rating model
+## 表示言語
 
-ELF deliberately does **not** publish a 100-step `G9 Mid-High` style official scale.
+公開画面と管理画面は **日本語 / English** に対応しています。
 
-- Canonical rating: integer `P/G/U` tier such as `G9`.
-- Human evidence: integer anchor tier + a five-step lean `-2..2`.
-- The lean may be aggregated internally, but never silently becomes a canonical decimal rating.
-- Reference `position_hint` uses the same coarse scale only as descriptive metadata.
+- 初回はブラウザ言語が日本語なら日本語、それ以外は英語を選びます。
+- 画面の言語切替でいつでも変更できます。
+- 選択した言語は `localStorage` の `elf_locale` に保存されます。
+- 内部の `RERATE`、`NEEDS_REVIEW`、`ADMIN` などの値は変更せず、表示だけを翻訳します。
 
-## Data rules
+## 難易度モデル
 
-1. `Level` and `LevelVersion` are separate. SHA-256 belongs to a version.
-2. Canonical ratings are historical rows; publishing a rerate closes the previous current row.
-3. Reference charts may be rerated. A mismatch marks the Reference `NEEDS_REVIEW` instead of blocking the rerate.
-4. Community votes, canonical decisions, external imports and Analyzer predictions remain separate datasets.
-5. TUF / Clastar Galaxy imports are raw observations until a human workflow promotes a decision.
-6. Administrative writes are audited.
+ELF は、`G9 Mid-High` のような100段階相当の細分化を**公式難易度として公開しません**。
 
-## Fresh local setup
+- 確定難易度: `G9` のような整数の `P/G/U` 段階。
+- 人間の判断材料: 整数の基準段階 + `-2..2` の5段階の傾き。
+- 傾きは内部集計に使えますが、自動的に小数の確定難易度にはなりません。
+- 基準譜面の `position_hint` も、説明用の粗い位置情報として同じ尺度を使います。
 
-Requirements:
+## データの原則
+
+1. `Level`（譜面）と `LevelVersion`（譜面の版）を分離します。SHA-256 は版に属します。
+2. 確定難易度は履歴行として保存し、難易度変更時は以前の現行行を閉じます。
+3. 基準譜面も難易度変更できます。確定難易度と位置が矛盾した場合は、変更を止めず基準譜面を `NEEDS_REVIEW`（要確認）にします。
+4. コミュニティ評価、確定判断、外部データ、Analyzer 予測は別データとして保持します。
+5. TUF / Clastar Galaxy などの取り込み値は、人間の手順で採用されるまでは外部観測値です。
+6. 管理操作は監査ログに記録します。
+
+## 新しい環境でのローカルセットアップ
+
+必要なもの:
 
 - Node.js 20+
-- PostgreSQL server
+- PostgreSQL サーバー
 - Git
 
-A Cloudflare account is **not** required for local development.
+ローカル開発に Cloudflare アカウントは**不要**です。
 
 ```powershell
 git clone https://github.com/kineticnapier/Enhanced-Level-Forum.git
@@ -50,36 +61,34 @@ npm install
 npm run setup:local
 ```
 
-`setup:local` is idempotent. It:
+`setup:local` は何度実行しても安全です。次を行います。
 
-- creates `.env` from `.env.example` if needed;
-- creates `apps/api/.dev.vars`, `apps/web/.env.local`, and `apps/admin/.env.local` from their examples without overwriting existing files;
-- connects to PostgreSQL;
-- creates the database if it does not exist;
-- applies all pending migrations, including authentication hardening migrations.
+- 必要なら `.env.example` から `.env` を作成。
+- 既存ファイルを上書きせず、`apps/api/.dev.vars`、`apps/web/.env.local`、`apps/admin/.env.local` を例から作成。
+- PostgreSQL に接続。
+- データベースがなければ作成。
+- 認証強化を含む未適用マイグレーションを適用。
 
-The default connection is:
+既定の接続先:
 
 ```text
 postgres://postgres:postgres@127.0.0.1:5432/adoforum
 ```
 
-The database is still named `adoforum` internally for compatibility with existing development databases. The project/product name is ELF.
+既存の開発DBとの互換性のため、内部のデータベース名は引き続き `adoforum` です。プロジェクト名・製品名は ELF です。
 
-If your PostgreSQL password is not `postgres`, set the connection before the first setup run:
+PostgreSQL のパスワードが `postgres` でない場合は、初回セットアップ前に接続先を指定します。
 
 ```powershell
 $env:DATABASE_URL="postgres://postgres:<PASSWORD>@127.0.0.1:5432/adoforum"
 npm run setup:local
 ```
 
-The generated `.env` is ignored by Git. Later shells do not need to export `DATABASE_URL`; the development and migration scripts read `.env` automatically.
+生成される `.env` は Git 管理外です。以後の開発・マイグレーション用スクリプトは `.env` を自動で読みます。
 
-If PostgreSQL authentication fails, edit `.env` and rerun `npm run setup:local`.
+## ローカル起動
 
-## Run locally
-
-Open three terminals in the repository root:
+リポジトリ直下で3つのターミナルを開きます。
 
 ```powershell
 npm run dev:api
@@ -93,36 +102,36 @@ npm run dev:web
 npm run dev:admin
 ```
 
-Open:
+アクセス先:
 
-- Public: `http://localhost:5173`
-- Admin: `http://localhost:5174`
-- API health: `http://localhost:8787/api/health`
+- 公開画面: `http://localhost:5173`
+- 管理画面: `http://localhost:5174`
+- API ヘルスチェック: `http://localhost:8787/api/health`
 
-Expected health response:
+正常時の例:
 
 ```json
 {"ok":true,"database":true,"version":"0.3.0"}
 ```
 
-Use `localhost` consistently for browser-facing services. Do not mix it with `127.0.0.1`; the local session cookie is `SameSite=Lax`.
+ブラウザ向けサービスでは `localhost` に統一し、`127.0.0.1` と混在させないでください。ローカルのセッションCookieは `SameSite=Lax` です。
 
-The root `dev:api` command reads `DATABASE_URL` from `.env` and automatically supplies it to Wrangler's local Hyperdrive binding. Database passwords therefore do not need to be committed to `wrangler.jsonc`.
+`npm run dev:api` は `.env` の `DATABASE_URL` を読み、Wrangler のローカル Hyperdrive バインディングへ自動で渡します。DBパスワードを `wrangler.jsonc` に書く必要はありません。
 
-## Local bootstrap admin
+## ローカルの初期管理者
 
-`npm run setup:local` creates `apps/api/.dev.vars` from the checked-in example if the file is missing.
+`npm run setup:local` は、存在しない場合に `apps/api/.dev.vars` を作成します。
 
-The example credentials are development-only:
+例の認証情報は開発専用です。
 
 ```text
 Email:    admin@example.com
 Password: change-me-immediately
 ```
 
-The bootstrap account is created only when a local login exactly matches `BOOTSTRAP_ADMIN_EMAIL` / `BOOTSTRAP_ADMIN_PASSWORD` and that email is not already present.
+`BOOTSTRAP_ADMIN_EMAIL` / `BOOTSTRAP_ADMIN_PASSWORD` と完全一致するローカルログインがあり、そのメールアドレスのユーザーがまだ存在しない場合だけ初期管理者を作成します。
 
-**`ENVIRONMENT=production` ignores bootstrap credentials completely.** Production administrators are created out-of-band after migrations:
+**`ENVIRONMENT=production` では bootstrap 認証情報を完全に無視します。** 本番管理者はマイグレーション後に別経路で作成します。
 
 ```powershell
 $env:DATABASE_URL="postgres://USER:PASSWORD@HOST:5432/adoforum?sslmode=require"
@@ -131,13 +140,13 @@ npm run auth:create-admin -- --email admin@example.com --name "ELF Admin"
 Remove-Item Env:ELF_ADMIN_PASSWORD
 ```
 
-See `docs/SECURITY.md` for login throttling, account disabling, session revocation and cookie rules.
+ログイン制限、アカウント無効化、セッション失効、Cookie の詳細は [docs/SECURITY.md](docs/SECURITY.md) を参照してください。
 
-## TUF importer
+## TUF 取り込み
 
-The TUF importer reads the public TUF v2 level search and Reference endpoints and stores the result as **external observations**. It does not create ELF Levels and it never writes ELF `canonical_ratings` or `difficulty_references`.
+TUF importer は公開 TUF v2 の譜面検索・Reference APIを読み、結果を**外部観測値**として保存します。ELF の譜面を勝手に作らず、`canonical_ratings` や `difficulty_references` に直接書き込みません。
 
-After applying migrations and starting the API:
+マイグレーション適用後、APIを起動して実行します。
 
 ```powershell
 # terminal 1
@@ -147,7 +156,7 @@ npm run dev:api
 npm run import:tuf
 ```
 
-For the default local bootstrap account, `import:tuf` reads the credentials from `apps/api/.dev.vars`. If the local admin uses different credentials:
+既定のローカル管理者では `apps/api/.dev.vars` の認証情報を使います。別の認証情報を使う場合:
 
 ```powershell
 $env:ELF_ADMIN_EMAIL="your-admin@example.com"
@@ -155,47 +164,47 @@ $env:ELF_ADMIN_PASSWORD="your-password"
 npm run import:tuf
 ```
 
-The importer stores:
+保存先:
 
-- the complete raw response in `import_snapshots`;
-- one normalized row per external level in `external_level_observations`;
-- TUF difficulty as `external_rating_observations`;
-- TUF References as `external_reference_observations`;
-- malformed/ambiguous/conflicting data in `import_issues`.
+- 完全な元レスポンス: `import_snapshots`
+- 外部譜面ごとの正規化行: `external_level_observations`
+- TUF難易度: `external_rating_observations`
+- TUF基準譜面情報: `external_reference_observations`
+- 不正・曖昧・矛盾したデータ: `import_issues`
 
-A TUF ID is linked to an existing ELF Level only when a mapping already exists, or when an incoming valid SHA-256 exactly matches an existing ELF `LevelVersion`. Special/non-PGU labels such as `Impossible` remain external labels and are not forced into P/G/U.
+TUF ID は、既存の対応表がある場合、または受信した有効な SHA-256 が ELF の `LevelVersion` と完全一致した場合だけ既存譜面に結び付けます。`Impossible` など P/G/U 以外の特殊難易度は外部ラベルのまま保持し、P/G/Uへ強制変換しません。
 
-For deterministic/offline testing, pass a JSON fixture containing `{ "levels": [...], "references": [...] }`:
+再現可能なオフラインテストでは `{ "levels": [...], "references": [...] }` を含むJSONを渡せます。
 
 ```powershell
 npm run import:tuf -- .\path\to\tuf-fixture.json
 ```
 
-## Authentication hardening
+## 認証の安全対策
 
-Production authentication adds:
+本番認証には次を実装しています。
 
-- host-only `__Host-elf_session` cookies (`Secure`, `HttpOnly`, `SameSite=Lax`);
-- exact browser-Origin checks for state-changing API calls;
-- salted email/IP login throttling backed by PostgreSQL;
-- active/disabled account state;
-- password change and admin password reset with session revocation;
-- session revocation on role changes;
-- a guard against disabling/demoting the final active ADMIN;
-- development-only bootstrap credentials;
-- out-of-band production ADMIN creation.
+- host-only の `__Host-elf_session` Cookie (`Secure`, `HttpOnly`, `SameSite=Lax`)
+- 状態変更APIでブラウザ `Origin` を完全一致確認
+- PostgreSQL を使った、salt付きメール/IPキーによるログイン試行制限
+- アカウントの有効/無効状態
+- パスワード変更・管理者による再設定時のセッション失効
+- ロール変更時のセッション失効
+- 最後の有効な `ADMIN` を無効化・降格できない保護
+- 開発専用 bootstrap 認証情報
+- 本番管理者の別経路作成
 
-Production requires the Worker secret `AUTH_RATE_LIMIT_SALT`.
+本番Workerには `AUTH_RATE_LIMIT_SALT` secret が必須です。
 
-## Tests
+## テスト
 
-Static/build checks:
+静的チェック・ビルド:
 
 ```powershell
 npm test
 ```
 
-DB/API integration tests require all current migrations:
+DB/API統合テストには現行マイグレーションが必要です。
 
 ```powershell
 npm run setup:local
@@ -207,9 +216,9 @@ npm run dev:api
 npm run test:e2e
 ```
 
-The E2E suite covers the canonical workflow, TUF isolation/reconciliation/proposals, public governance UI APIs, Reference proposal execution, and production-auth behavior.
+E2E は確定難易度、TUFの分離・照合・提案、公開審議API、基準譜面提案の適用、本番認証などを確認します。
 
-## Existing checkout
+## 既存チェックアウトの更新
 
 ```powershell
 git pull
@@ -218,17 +227,17 @@ npm run setup:local
 npm test
 ```
 
-`setup:local` does not overwrite existing local secrets/config files and safely skips already-applied migrations.
+`setup:local` は既存の秘密情報・設定を上書きせず、適用済みマイグレーションも安全に飛ばします。
 
-## Repository layout
+## リポジトリ構成
 
 ```text
 apps/
   api/       Hono Worker + Hyperdrive/Postgres
-  web/       public React/Vite frontend
-  admin/     staff React/Vite frontend
+  web/       公開 React/Vite フロントエンド
+  admin/     運営 React/Vite フロントエンド
 packages/
-  shared/    shared types and rating semantics
+  shared/    共通型・難易度の意味定義
 db/
   migrations/
 scripts/
@@ -244,8 +253,9 @@ docs/
   DEPLOY.md
   API.md
   SECURITY.md
+  en/        英語版ドキュメント
 ```
 
-## Production deployment
+## 本番デプロイ
 
-See `docs/DEPLOY.md` for Hyperdrive, production secrets, CORS origins, the production administrator bootstrap, custom domains and the production smoke path.
+Hyperdrive、本番secret、CORS origin、本番管理者、`workers.dev` / Custom Domain、smoke test の詳細は [docs/DEPLOY.md](docs/DEPLOY.md) を参照してください。

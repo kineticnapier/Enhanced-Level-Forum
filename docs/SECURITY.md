@@ -1,47 +1,49 @@
-# Security notes
+# セキュリティ
 
-## Authentication
+[English](en/SECURITY.md)
 
-- passwords are stored as PBKDF2-SHA256 hashes with a random salt;
-- passwords accepted by account-management endpoints are 12..256 characters;
-- session tokens are random and only SHA-256 hashes of them are stored in PostgreSQL;
-- sessions expire after 14 days;
-- changing a password revokes every other session for that user;
-- an administrator password reset revokes every session for the target user;
-- changing a role revokes existing sessions so the account must re-authenticate;
-- disabling an account revokes sessions and `loadUser` ignores disabled accounts;
-- the final active `ADMIN` cannot be disabled or demoted.
+## 認証
 
-Production uses a host-only cookie named `__Host-elf_session` with `Secure`, `HttpOnly`, `SameSite=Lax`, and `Path=/`. The cookie deliberately has **no `Domain` attribute**. The public and admin frontends never need direct access to the session cookie; credentialed requests send it only to the API host.
+- パスワードはランダムsalt付き PBKDF2-SHA256 ハッシュで保存します。
+- アカウント管理APIが受け付けるパスワードは12〜256文字です。
+- セッショントークンはランダム生成し、PostgreSQLにはそのSHA-256ハッシュだけを保存します。
+- セッション有効期限は14日です。
+- パスワード変更時、そのユーザーの現在以外のセッションを失効させます。
+- 管理者がパスワードを再設定すると対象ユーザーの全セッションを失効させます。
+- ロール変更時も既存セッションを失効させ、再ログインを要求します。
+- アカウント無効化時はセッションを失効させ、`loadUser` も無効ユーザーを返しません。
+- 最後の有効な `ADMIN` は無効化・降格できません。
 
-Local development continues to use `elf_session` over HTTP.
+本番は host-only の `__Host-elf_session` Cookie を使い、`Secure`, `HttpOnly`, `SameSite=Lax`, `Path=/` を設定します。**`Domain` 属性は付けません。** 公開・管理フロントエンドはCookieを直接読む必要がなく、credentials付きリクエストでAPIホストへだけ送信します。
 
-## Browser-origin / CSRF boundary
+ローカル開発ではHTTP上の `elf_session` を使います。
 
-For state-changing API requests (`POST`, `PUT`, `PATCH`, `DELETE`), a browser-supplied `Origin` must exactly match `WEB_ORIGIN` or `ADMIN_ORIGIN`. Disallowed origins receive 403 before a write route runs.
+## ブラウザOrigin / CSRF境界
 
-Requests with no `Origin` remain possible for explicit CLI/service jobs. This is intentional: browser requests provide `Origin`, while maintenance tools such as the importer can authenticate without pretending to be a browser.
+状態変更API (`POST`, `PUT`, `PATCH`, `DELETE`) では、ブラウザが送る `Origin` が `WEB_ORIGIN` または `ADMIN_ORIGIN` と完全一致する必要があります。不許可のOriginは書き込みルート実行前に403になります。
 
-CORS never uses a wildcard with credentials.
+`Origin` のない明示的なCLI / サービスジョブは許可します。ブラウザはOriginを送る一方、importerなどの保守ツールはブラウザを装わず認証できるためです。
 
-## Login throttling
+credentials付きCORSでワイルドカードは使いません。
 
-`004_auth_hardening.sql` adds `auth_login_attempts`.
+## ログイン試行制限
 
-Failed password login is limited over a 15-minute window:
+`004_auth_hardening.sql` が `auth_login_attempts` を追加します。
 
-- 8 failures per normalized email key;
-- 30 failures per client-IP key.
+パスワードログイン失敗は15分間で次の上限があります。
 
-The table stores salted SHA-256 pseudonymous keys, not raw email/IP strings. Production requires `AUTH_RATE_LIMIT_SALT` as a Worker secret. Development uses a fixed development-only salt so local tests do not require secret setup.
+- 正規化メールキーごとに8回
+- クライアントIPキーごとに30回
 
-Old attempt rows are pruned opportunistically after login activity.
+テーブルには生のメールアドレス/IPではなく、salt付きSHA-256の疑似匿名キーを保存します。本番では Worker secret `AUTH_RATE_LIMIT_SALT` が必須です。開発ではテスト用の固定saltを使います。
 
-## Production administrator bootstrap
+古い試行行はログイン処理に合わせて適宜削除します。
 
-`BOOTSTRAP_ADMIN_EMAIL` / `BOOTSTRAP_ADMIN_PASSWORD` are accepted **only when `ENVIRONMENT` is not `production`**. They exist for local development compatibility.
+## 本番の初期管理者
 
-Production creates the first administrator out-of-band, after migrations:
+`BOOTSTRAP_ADMIN_EMAIL` / `BOOTSTRAP_ADMIN_PASSWORD` は **`ENVIRONMENT` が `production` でない場合だけ**受け付けます。ローカル開発互換用です。
+
+本番の最初の管理者は、マイグレーション後に別経路で作ります。
 
 ```powershell
 $env:DATABASE_URL="postgres://USER:PASSWORD@HOST:5432/adoforum?sslmode=require"
@@ -50,24 +52,24 @@ npm run auth:create-admin -- --email admin@example.com --name "ELF Admin"
 Remove-Item Env:ELF_ADMIN_PASSWORD
 ```
 
-The script refuses to silently promote/reactivate an existing non-admin account, and it never accepts the password as a command-line argument.
+このスクリプトは既存の非管理者アカウントを勝手に昇格・再有効化せず、パスワードをコマンドライン引数でも受け取りません。
 
-## Admin frontend
+## 管理画面
 
-The API always enforces roles even if `admin.example.com` is additionally protected by Cloudflare Access. Access is defense-in-depth, not authorization state.
+`admin.example.com` を Cloudflare Access で追加保護しても、API側のロール確認は常に行います。Accessは多層防御であり、アプリケーションの認可状態そのものではありません。
 
-## Security-related API operations
+## セキュリティ関連API
 
 - `POST /api/auth/change-password`
 - `POST /api/auth/logout-all`
 - `PATCH /api/admin/users/:id/status`
 - `POST /api/admin/users/:id/reset-password`
 
-User creation, status changes, role changes, password changes/resets, and authentication events are audited.
+ユーザー作成、状態変更、ロール変更、パスワード変更/再設定、認証イベントは監査ログに残します。
 
-## Remaining work
+## 残作業
 
-- dedicated service identity / execution path for scheduled TUF imports (planned with the Cron Trigger work);
-- password-recovery or external identity-provider flow if self-service recovery is needed;
-- bot mitigation if public self-registration is ever added;
-- moderation policy for free-text proposal/comments.
+- 定期TUF取り込み用の専用サービスID / 実行経路（Cron Trigger作業で予定）
+- セルフサービス復旧が必要ならパスワード復旧または外部IdP
+- 公開ユーザー登録を追加する場合のbot対策
+- 提案・コメント自由記述のモデレーション方針
