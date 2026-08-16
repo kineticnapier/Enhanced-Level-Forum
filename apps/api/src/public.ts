@@ -345,10 +345,14 @@ export function registerPublicRoutes(app: Hono<AppBindings>) {
         AND ($3::text IS NULL OR p.type=$3)
         AND ($4='' OR p.level_id::text=$4)
         AND ($5='' OR p.title ILIKE '%'||$5||'%' OR p.reason ILIKE '%'||$5||'%' OR l.title ILIKE '%'||$5||'%')`
+      const countWhere = `($1::text IS NULL OR p.status=$1)
+        AND ($2::text IS NULL OR p.type=$2)
+        AND ($3='' OR p.level_id::text=$3)
+        AND ($4='' OR p.title ILIKE '%'||$4||'%' OR p.reason ILIKE '%'||$4||'%' OR l.title ILIKE '%'||$4||'%')`
       const [count, rows] = await Promise.all([
         db.query(
-          `SELECT count(*)::int AS count FROM proposals p JOIN levels l ON l.id=p.level_id WHERE ${where}`,
-          [userId, ...filterParams],
+          `SELECT count(*)::int AS count FROM proposals p JOIN levels l ON l.id=p.level_id WHERE ${countWhere}`,
+          filterParams,
         ),
         db.query(
           `${proposalSelect}
