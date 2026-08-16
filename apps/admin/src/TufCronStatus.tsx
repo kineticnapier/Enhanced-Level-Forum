@@ -39,7 +39,7 @@ export function TufCronStatus() {
   const ja = locale === 'ja'
   const copy = ja ? {
     title: 'TUF Cron Status',
-    help: '30分ごとのTUF incremental crawlが実際に動いているかをDBの状態から確認します。',
+    help: '15分ごと・最大1000 levelsのTUF incremental crawlが実際に動いているかをDBの状態から確認します。',
     refresh: '更新',
     lastTick: '最終Tick',
     status: '状態',
@@ -56,7 +56,7 @@ export function TufCronStatus() {
     levels: 'levels',
   } : {
     title: 'TUF Cron Status',
-    help: 'Shows whether the 30-minute TUF incremental crawl is actually progressing, using persisted database state.',
+    help: 'Shows whether the 15-minute TUF incremental crawl (up to 1000 levels per tick) is actually progressing, using persisted database state.',
     refresh: 'Refresh',
     lastTick: 'Last tick',
     status: 'Status',
@@ -124,7 +124,7 @@ export function TufCronStatus() {
       <div><span>{copy.latest}</span><strong>{latest}</strong></div>
       <div><span>{copy.deferred}</span><strong>{status?.lastRun?.consecutiveDeferred ?? 0}</strong></div>
       <div><span>{copy.next}</span><strong>{status ? date(status.nextScheduledAt) : '—'}</strong></div>
-      <div><span>{copy.schedule}</span><strong><code>{status?.schedule ?? '*/30 * * * *'}</code></strong></div>
+      <div><span>{copy.schedule}</span><strong><code>{status?.schedule ?? '*/15 * * * *'}</code></strong></div>
     </div>
 
     {status?.lastRun?.reason && <p className="cron-reason"><strong>{status.lastRun.status}:</strong> {status.lastRun.reason}</p>}
