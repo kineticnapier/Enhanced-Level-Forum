@@ -1,28 +1,34 @@
 # Cloudflare production deployment
 
-ELF production consists of three Cloudflare Workers plus an external PostgreSQL database:
+ELF production consists of three Cloudflare Workers plus an external PostgreSQL database. A purchased/custom domain is **not required** for the initial deployment.
+
+The default deployment mode uses the account's `workers.dev` subdomain:
 
 ```text
-forum.example.com  -> enhanced-level-forum-web    (React SPA / Static Assets)
-admin.example.com  -> enhanced-level-forum-admin  (React SPA / Static Assets)
-api.example.com    -> enhanced-level-forum-api    (Hono Worker)
-                                              |
-                                              v
-                                      Hyperdrive -> PostgreSQL
+enhanced-level-forum-web.<account>.workers.dev    -> public React SPA
+enhanced-level-forum-admin.<account>.workers.dev  -> staff React SPA
+enhanced-level-forum-api.<account>.workers.dev    -> Hono API Worker
+                                                       |
+                                                       v
+                                               Hyperdrive -> PostgreSQL
 ```
 
-The deployment tooling intentionally keeps real domains, database credentials, the rate-limit salt, and the initial ADMIN password out of Git.
+Later, the same deployment can be moved to custom sibling domains without recreating the database or Hyperdrive.
+
+The deployment tooling keeps the database credentials, rate-limit salt, initial ADMIN password, and generated Wrangler configs out of Git.
 
 ## Requirements
 
 - Node.js 20+
 - npm dependencies installed
-- a Cloudflare account with a zone containing the three intended sibling subdomains
+- a Cloudflare account with Workers enabled
 - Wrangler authenticated to that account
 - a remotely reachable PostgreSQL database supported by Hyperdrive
-- all three production origins on sibling HTTPS hosts under the same site
+- the account's `workers.dev` subdomain label for the default mode
 
-Production uses a host-only `__Host-elf_session` cookie with `SameSite=Lax`; the public/admin/API hosts therefore need to remain same-site.
+Cloudflare assigns each Worker a URL of the form `<worker-name>.<account-subdomain>.workers.dev` when `workers_dev` is enabled. All three ELF Workers use fixed names, so their origins can be derived before deployment.
+
+Production uses a host-only `__Host-elf_session` cookie with `SameSite=Lax`. Public/admin/API therefore remain sibling HTTPS hosts under the same site in both deployment modes.
 
 ## 1. Create local production configuration
 
@@ -32,12 +38,16 @@ From the repository root:
 Copy-Item .env.production.example .env.production
 ```
 
-Edit `.env.production`:
+For a domainless first deployment, edit `.env.production` like this:
 
 ```dotenv
-ELF_PUBLIC_ORIGIN=https://forum.example.com
-ELF_ADMIN_ORIGIN=https://admin.example.com
-ELF_API_ORIGIN=https://api.example.com
+ELF_DEPLOY_MODE=workers_dev
+ELF_WORKERS_DEV_SUBDOMAIN=your-account-subdomain
+
+# Leave these empty in workers_dev mode.
+ELF_PUBLIC_ORIGIN=
+ELF_ADMIN_ORIGIN=
+ELF_API_ORIGIN=
 
 DATABASE_URL=postgres://USER:PASSWORD@HOST:5432/adoforum?sslmode=require
 
@@ -53,7 +63,21 @@ ELF_ADMIN_NAME=ELF Administrator
 ELF_ADMIN_PASSWORD=
 ```
 
-`.env.production` is gitignored. Do not commit it or copy its values into tracked Wrangler files.
+If the Cloudflare dashboard shows the account URL as:
+
+```text
+https://hello.workers.dev
+```
+
+then use:
+
+```dotenv
+ELF_WORKERS_DEV_SUBDOMAIN=hello
+```
+
+The loader also accepts `hello.workers.dev` and normalizes it to the same account label.
+
+`.env.production` is gitignored. Do not commit it or copy its secret values into tracked Wrangler files.
 
 ## 2. First-time Cloudflare/database setup
 
@@ -65,13 +89,15 @@ npm run production:setup
 
 The command:
 
-1. validates the production origins and secret requirements;
-2. runs `wrangler whoami` so an account/login failure happens before any database mutation;
-3. creates the Hyperdrive configuration when `ELF_HYPERDRIVE_ID` is empty;
-4. stores the returned Hyperdrive ID back into the gitignored `.env.production`;
-5. applies all pending PostgreSQL migrations using `DATABASE_URL`;
-6. creates the initial ADMIN when `ELF_ADMIN_EMAIL` and `ELF_ADMIN_PASSWORD` are supplied;
+1. validates the deployment mode and derived/explicit origins;
+2. runs `wrangler whoami` so an account/login failure happens before database mutation;
+3. creates Hyperdrive when `ELF_HYPERDRIVE_ID` is empty;
+4. stores the returned Hyperdrive ID in the gitignored `.env.production`;
+5. applies all pending PostgreSQL migrations;
+6. creates the initial ADMIN when credentials are supplied;
 7. generates gitignored production Wrangler configs for API/public/admin.
+
+In `workers_dev` mode, setup prints the three derived URLs. No Cloudflare DNS zone or purchased domain is required.
 
 The PostgreSQL connection string is redacted from the setup command log. Wrangler still receives it directly for Hyperdrive creation.
 
@@ -91,16 +117,26 @@ apps/admin/wrangler.production.generated.json
 
 They are ignored by Git and recreated from `.env.production`.
 
-The API production config includes:
+### workers.dev mode
 
-- `ENVIRONMENT=production`;
-- exact `WEB_ORIGIN` and `ADMIN_ORIGIN` values;
-- the `HYPERDRIVE` binding;
-- `AUTH_RATE_LIMIT_SALT` as a required Worker secret;
-- a Custom Domain route for the API hostname;
-- `workers_dev=false`.
+For `ELF_DEPLOY_MODE=workers_dev`:
 
-The frontend configs use Workers Static Assets with `not_found_handling: "single-page-application"`, Custom Domain routes, and `workers_dev=false`.
+- all three configs use `workers_dev=true`;
+- no Custom Domain `routes` are emitted;
+- Preview URLs are disabled separately with `preview_urls=false`;
+- API CORS origins are the derived public/admin `workers.dev` URLs;
+- frontends are built against the derived API `workers.dev` URL.
+
+### Custom Domain mode
+
+For `ELF_DEPLOY_MODE=custom_domain`:
+
+- `ELF_PUBLIC_ORIGIN`, `ELF_ADMIN_ORIGIN`, and `ELF_API_ORIGIN` are required;
+- they must be sibling HTTPS origins;
+- generated configs use Custom Domain routes;
+- `workers_dev=false` and `preview_urls=false`.
+
+The API config always includes `ENVIRONMENT=production`, the `HYPERDRIVE` binding, observability, and `AUTH_RATE_LIMIT_SALT` as a required secret. Frontend configs always use Workers Static Assets with SPA fallback.
 
 ## 4. Deploy all three Workers
 
@@ -114,16 +150,22 @@ The deployment command:
 
 1. validates `.env.production` and regenerates all production Wrangler configs;
 2. builds shared/API code;
-3. deploys the API with `AUTH_RATE_LIMIT_SALT` supplied through Wrangler's `--secrets-file` mechanism;
+3. deploys the API with `AUTH_RATE_LIMIT_SALT` supplied through Wrangler's secrets-file mechanism;
 4. builds both React frontends with `VITE_API_URL=<ELF_API_ORIGIN>/api`;
 5. deploys public and admin Static Asset Workers;
 6. removes the temporary local Worker-secret file in a `finally` block.
 
-The generated Custom Domain configuration lets Cloudflare create/manage the DNS records and certificates for the Worker hosts. The hostnames must belong to a zone available in the authenticated Cloudflare account.
+In workers.dev mode the resulting public URLs are deterministic from the Worker names and account subdomain, for example:
+
+```text
+https://enhanced-level-forum-web.hello.workers.dev
+https://enhanced-level-forum-admin.hello.workers.dev
+https://enhanced-level-forum-api.hello.workers.dev
+```
 
 ## 5. Live production smoke test
 
-After DNS/certificates are active:
+After deployment:
 
 ```powershell
 npm run production:smoke
@@ -135,9 +177,9 @@ The smoke test checks:
 - public and admin frontends return HTML;
 - the public Level catalog responds;
 - an untrusted browser Origin is rejected with 403;
-- both configured frontend origins receive the expected credentialed CORS preflight response;
+- both configured frontend origins receive credentialed CORS preflight responses;
 - when production ADMIN credentials remain present locally, login succeeds and the cookie is `__Host-elf_session; Secure; HttpOnly; SameSite=Lax; Path=/` with no `Domain` attribute;
-- the authenticated `/api/auth/me` session resolves as ADMIN.
+- authenticated `/api/auth/me` resolves as ADMIN.
 
 Expected final marker:
 
@@ -145,11 +187,35 @@ Expected final marker:
 PRODUCTION DEPLOY SMOKE PASSED
 ```
 
-After smoke succeeds, remove `ELF_ADMIN_PASSWORD` from `.env.production` if it is no longer needed for repeated smoke tests. The database contains only its password hash.
+After smoke succeeds, remove `ELF_ADMIN_PASSWORD` from `.env.production` if it is no longer needed for repeated login smoke tests. The database contains only its password hash.
 
-## 6. Re-deployment
+## 6. Move to a custom domain later
 
-Normal code deployments do not need to recreate Hyperdrive or the ADMIN:
+Buying a domain later does not require a new ELF database, a new ADMIN, or a new Hyperdrive configuration.
+
+Add the domain to the Cloudflare account, then change `.env.production`:
+
+```dotenv
+ELF_DEPLOY_MODE=custom_domain
+ELF_PUBLIC_ORIGIN=https://forum.example.com
+ELF_ADMIN_ORIGIN=https://admin.example.com
+ELF_API_ORIGIN=https://api.example.com
+```
+
+Keep the existing `DATABASE_URL`, `ELF_HYPERDRIVE_ID`, and secrets, then run:
+
+```powershell
+npm run production:deploy
+npm run production:smoke
+```
+
+The generated Wrangler configs will switch from `workers_dev=true` with no routes to Custom Domain routes with `workers_dev=false`.
+
+Do not leave old `workers.dev` origins in the frontend build manually; `production:deploy` rebuilds both frontends against the new API origin.
+
+## 7. Re-deployment
+
+Normal code deployments do not recreate Hyperdrive or the ADMIN:
 
 ```powershell
 git pull
@@ -169,11 +235,22 @@ Remove-Item Env:DATABASE_URL
 
 Alternatively, rerunning `npm run production:setup` is idempotent for already-applied migrations and an already-existing active ADMIN.
 
-## 7. Cloudflare Access for admin
+## 8. Cloudflare Access for admin
 
-`admin.example.com` may additionally be protected with Cloudflare Access. This is defense-in-depth only: the API continues to enforce ELF roles and must not rely on Access as application authorization.
+A custom-domain admin frontend may additionally be protected with Cloudflare Access. This is defense-in-depth only: the API continues to enforce ELF roles and must not rely on Access as application authorization.
 
-## 8. Failure/recovery notes
+## 9. Failure/recovery notes
+
+### I do not own a domain
+
+Use the default:
+
+```dotenv
+ELF_DEPLOY_MODE=workers_dev
+ELF_WORKERS_DEV_SUBDOMAIN=<your Cloudflare account subdomain>
+```
+
+No Custom Domain route is generated.
 
 ### Hyperdrive creation succeeded but ID parsing failed
 
@@ -185,19 +262,25 @@ ELF_HYPERDRIVE_ID=<id>
 
 Then rerun `npm run production:setup`. It will not create another Hyperdrive.
 
+### workers.dev deploy URL is wrong
+
+Check the account's Workers & Pages subdomain. `ELF_WORKERS_DEV_SUBDOMAIN` is the account label only, not a Worker name. For `hello.workers.dev`, use `hello`.
+
+The Worker names are fixed by ELF and are prepended automatically.
+
 ### Custom Domain deploy fails
 
-Confirm the three hostnames are in a Cloudflare zone available to the currently authenticated Wrangler account. No application DNS records need to be committed to the repository.
+Confirm `ELF_DEPLOY_MODE=custom_domain` and that all three hostnames belong to a Cloudflare zone available to the authenticated Wrangler account.
 
 ### API deploy succeeds but browser login fails
 
 Check that:
 
-- all three URLs in `.env.production` are exact HTTPS origins;
+- all three derived/explicit URLs are HTTPS and sibling same-site hosts;
 - the frontend was built by `production:deploy`, not an older local build;
 - `AUTH_RATE_LIMIT_SALT` was uploaded;
 - `/api/health` reports `database:true`;
-- public/admin/API are sibling same-site hosts.
+- in workers.dev mode, all three Workers use the same account subdomain.
 
 ### Database migration fails
 

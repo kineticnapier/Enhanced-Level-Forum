@@ -22,6 +22,7 @@
     "production:setup": "node scripts/setup-production.mjs",
     "production:deploy": "node scripts/deploy-production.mjs",
     "production:smoke": "node scripts/smoke-production.mjs",
+    "production:reset-admin": "node scripts/reset-production-admin.mjs",
     "db:migrate": "node scripts/apply-migrations.mjs",
     "auth:create-admin": "node scripts/create-admin.mjs",
     "import:tuf": "node scripts/import-tuf.mjs",

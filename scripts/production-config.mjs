@@ -3,6 +3,12 @@ import { resolve } from 'node:path'
 import { parseEnvText, ROOT_DIR } from './local-env.mjs'
 
 const PRODUCTION_ENV = resolve(ROOT_DIR, '.env.production')
+const DEPLOY_MODES = new Set(['workers_dev', 'custom_domain'])
+const WORKER_NAMES = {
+  public: 'enhanced-level-forum-web',
+  admin: 'enhanced-level-forum-admin',
+  api: 'enhanced-level-forum-api',
+}
 
 async function readProductionFile() {
   try {
@@ -40,16 +46,72 @@ function siblingBase(hostname) {
   return parts.length >= 3 ? parts.slice(1).join('.') : hostname
 }
 
-export async function loadProductionConfig({ requireHyperdrive = false, requireSecrets = false, requireAdmin = false } = {}) {
-  const fileEnv = await readProductionFile()
-  const publicOrigin = productionOrigin(value(fileEnv, 'ELF_PUBLIC_ORIGIN'), 'ELF_PUBLIC_ORIGIN')
-  const adminOrigin = productionOrigin(value(fileEnv, 'ELF_ADMIN_ORIGIN'), 'ELF_ADMIN_ORIGIN')
-  const apiOrigin = productionOrigin(value(fileEnv, 'ELF_API_ORIGIN'), 'ELF_API_ORIGIN')
+function normalizedWorkersDevSubdomain(raw) {
+  let value = raw.trim().toLowerCase()
+  if (value.endsWith('.workers.dev')) value = value.slice(0, -'.workers.dev'.length)
+  if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(value)) {
+    throw new Error('ELF_WORKERS_DEV_SUBDOMAIN must be the Cloudflare account subdomain label, for example "my-account".')
+  }
+  return value
+}
+
+function workersDevOrigins(accountSubdomain) {
+  return {
+    publicOrigin: `https://${WORKER_NAMES.public}.${accountSubdomain}.workers.dev`,
+    adminOrigin: `https://${WORKER_NAMES.admin}.${accountSubdomain}.workers.dev`,
+    apiOrigin: `https://${WORKER_NAMES.api}.${accountSubdomain}.workers.dev`,
+  }
+}
+
+function validateSameSiteOrigins(publicOrigin, adminOrigin, apiOrigin) {
   const origins = [new URL(publicOrigin), new URL(adminOrigin), new URL(apiOrigin)]
   const bases = new Set(origins.map((x) => siblingBase(x.hostname)))
   if (bases.size !== 1) {
-    throw new Error('ELF_PUBLIC_ORIGIN, ELF_ADMIN_ORIGIN, and ELF_API_ORIGIN must be sibling HTTPS hosts under the same site so SameSite=Lax auth works.')
+    throw new Error('Public, admin, and API origins must be sibling HTTPS hosts under the same site so SameSite=Lax auth works.')
   }
+}
+
+export async function loadProductionConfig({ requireHyperdrive = false, requireSecrets = false, requireAdmin = false } = {}) {
+  const fileEnv = await readProductionFile()
+  const explicitPublicOrigin = value(fileEnv, 'ELF_PUBLIC_ORIGIN')
+  const explicitAdminOrigin = value(fileEnv, 'ELF_ADMIN_ORIGIN')
+  const explicitApiOrigin = value(fileEnv, 'ELF_API_ORIGIN')
+  const configuredMode = value(fileEnv, 'ELF_DEPLOY_MODE').toLowerCase()
+  const legacyCustomDomainConfig = explicitPublicOrigin && explicitAdminOrigin && explicitApiOrigin
+  const deployMode = configuredMode || (legacyCustomDomainConfig ? 'custom_domain' : 'workers_dev')
+  if (!DEPLOY_MODES.has(deployMode)) throw new Error('ELF_DEPLOY_MODE must be "workers_dev" or "custom_domain".')
+
+  let workersDevSubdomain = ''
+  let publicOrigin
+  let adminOrigin
+  let apiOrigin
+
+  if (deployMode === 'workers_dev') {
+    workersDevSubdomain = normalizedWorkersDevSubdomain(value(fileEnv, 'ELF_WORKERS_DEV_SUBDOMAIN'))
+    ;({ publicOrigin, adminOrigin, apiOrigin } = workersDevOrigins(workersDevSubdomain))
+
+    const explicit = {
+      ELF_PUBLIC_ORIGIN: explicitPublicOrigin,
+      ELF_ADMIN_ORIGIN: explicitAdminOrigin,
+      ELF_API_ORIGIN: explicitApiOrigin,
+    }
+    const expected = {
+      ELF_PUBLIC_ORIGIN: publicOrigin,
+      ELF_ADMIN_ORIGIN: adminOrigin,
+      ELF_API_ORIGIN: apiOrigin,
+    }
+    for (const [name, raw] of Object.entries(explicit)) {
+      if (raw && productionOrigin(raw, name) !== expected[name]) {
+        throw new Error(`${name} does not match the workers.dev URL derived from ELF_WORKERS_DEV_SUBDOMAIN. Clear it or use ELF_DEPLOY_MODE=custom_domain.`)
+      }
+    }
+  } else {
+    publicOrigin = productionOrigin(explicitPublicOrigin, 'ELF_PUBLIC_ORIGIN')
+    adminOrigin = productionOrigin(explicitAdminOrigin, 'ELF_ADMIN_ORIGIN')
+    apiOrigin = productionOrigin(explicitApiOrigin, 'ELF_API_ORIGIN')
+  }
+
+  validateSameSiteOrigins(publicOrigin, adminOrigin, apiOrigin)
 
   const databaseUrlRaw = value(fileEnv, 'DATABASE_URL')
   const databaseUrl = databaseUrlRaw ? validateDatabaseUrl(databaseUrlRaw) : ''
@@ -70,6 +132,7 @@ export async function loadProductionConfig({ requireHyperdrive = false, requireS
   }
 
   return {
+    deployMode, workersDevSubdomain,
     publicOrigin, adminOrigin, apiOrigin, databaseUrl, hyperdriveId, hyperdriveName,
     authRateLimitSalt, adminEmail, adminName, adminPassword,
   }
@@ -84,20 +147,27 @@ export function redactDatabaseUrl(value) {
   } catch { return '(invalid)' }
 }
 
+function routingFor(config, origin) {
+  if (config.deployMode === 'workers_dev') {
+    return { workers_dev: true, preview_urls: false }
+  }
+  return {
+    workers_dev: false,
+    preview_urls: false,
+    routes: [{ pattern: new URL(origin).hostname, custom_domain: true }],
+  }
+}
+
 export async function writeProductionWranglerConfigs(config) {
   if (!config.hyperdriveId) throw new Error('Cannot generate Wrangler config without ELF_HYPERDRIVE_ID.')
-  const apiHost = new URL(config.apiOrigin).hostname
-  const webHost = new URL(config.publicOrigin).hostname
-  const adminHost = new URL(config.adminOrigin).hostname
 
   const api = {
     $schema: 'node_modules/wrangler/config-schema.json',
-    name: 'enhanced-level-forum-api',
+    name: WORKER_NAMES.api,
     main: 'src/entry.ts',
     compatibility_date: '2026-08-14',
     compatibility_flags: ['nodejs_compat'],
-    workers_dev: false,
-    routes: [{ pattern: apiHost, custom_domain: true }],
+    ...routingFor(config, config.apiOrigin),
     vars: {
       ENVIRONMENT: 'production',
       WEB_ORIGIN: config.publicOrigin,
@@ -107,19 +177,18 @@ export async function writeProductionWranglerConfigs(config) {
     hyperdrive: [{ binding: 'HYPERDRIVE', id: config.hyperdriveId }],
     observability: { enabled: true },
   }
-  const staticWorker = (name, host) => ({
+  const staticWorker = (name, origin) => ({
     $schema: 'node_modules/wrangler/config-schema.json',
     name,
     compatibility_date: '2026-08-14',
-    workers_dev: false,
-    routes: [{ pattern: host, custom_domain: true }],
+    ...routingFor(config, origin),
     assets: { directory: './dist', not_found_handling: 'single-page-application' },
   })
 
   await Promise.all([
     writeFile(resolve(ROOT_DIR, 'apps/api/wrangler.production.generated.json'), `${JSON.stringify(api, null, 2)}\n`, 'utf8'),
-    writeFile(resolve(ROOT_DIR, 'apps/web/wrangler.production.generated.json'), `${JSON.stringify(staticWorker('enhanced-level-forum-web', webHost), null, 2)}\n`, 'utf8'),
-    writeFile(resolve(ROOT_DIR, 'apps/admin/wrangler.production.generated.json'), `${JSON.stringify(staticWorker('enhanced-level-forum-admin', adminHost), null, 2)}\n`, 'utf8'),
+    writeFile(resolve(ROOT_DIR, 'apps/web/wrangler.production.generated.json'), `${JSON.stringify(staticWorker(WORKER_NAMES.public, config.publicOrigin), null, 2)}\n`, 'utf8'),
+    writeFile(resolve(ROOT_DIR, 'apps/admin/wrangler.production.generated.json'), `${JSON.stringify(staticWorker(WORKER_NAMES.admin, config.adminOrigin), null, 2)}\n`, 'utf8'),
   ])
 }
 
@@ -134,7 +203,8 @@ export async function persistHyperdriveId(id) {
   const fileEnv = await readProductionFile()
   fileEnv.ELF_HYPERDRIVE_ID = id
   const preferred = [
-    'ELF_PUBLIC_ORIGIN','ELF_ADMIN_ORIGIN','ELF_API_ORIGIN','DATABASE_URL','ELF_HYPERDRIVE_ID','ELF_HYPERDRIVE_NAME',
+    'ELF_DEPLOY_MODE','ELF_WORKERS_DEV_SUBDOMAIN','ELF_PUBLIC_ORIGIN','ELF_ADMIN_ORIGIN','ELF_API_ORIGIN',
+    'DATABASE_URL','ELF_HYPERDRIVE_ID','ELF_HYPERDRIVE_NAME',
     'AUTH_RATE_LIMIT_SALT','ELF_ADMIN_EMAIL','ELF_ADMIN_NAME','ELF_ADMIN_PASSWORD',
   ]
   const lines = preferred.filter((key) => key in fileEnv).map((key) => `${key}=${fileEnv[key] ?? ''}`)
