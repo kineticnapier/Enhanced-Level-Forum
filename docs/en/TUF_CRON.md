@@ -2,90 +2,117 @@
 
 [日本語](../TUF_CRON.md) | **English**
 
-The ELF API Worker periodically fetches TUF v2 data through a Cloudflare Cron Trigger.
+The ELF API Worker incrementally fetches TUF v2 data through a Cloudflare Cron Trigger.
 
 ## Schedule
 
 The current cron expression is:
 
 ```text
-17 * * * *
+*/30 * * * *
 ```
 
-Cloudflare Cron Triggers use UTC, so the job runs at **minute 17 of every UTC hour**. Because only the minute is fixed, it is also minute 17 of every hour in Japan time.
+Cloudflare Cron Triggers use UTC. This expression runs every 30 minutes, at `:00` and `:30` each hour regardless of timezone.
 
-The same cron expression is kept in both:
+The same expression is kept in:
 
-- `apps/api/wrangler.jsonc` — the tracked Worker configuration
-- `scripts/production-config.mjs` — the generated production Wrangler configuration
+- `apps/api/wrangler.jsonc`
+- `scripts/production-config.mjs`
 
-If the schedule changes, update both and run `npm test`.
+## Chunked fetching
 
-## Execution path
+A single Cron invocation no longer scans the entire TUF database. Each invocation fetches at most **5 pages = 500 levels** and persists progress in PostgreSQL staging tables.
 
 ```text
-Cloudflare Cron Trigger
-        |
-        v
-apps/api/src/worker.ts :: scheduled()
-        |
-        v
-runTufImport()
-        |
-        +--> fetchConsistentTufSnapshot()
-        |
-        v
+30-minute Cron
+   |
+   v
+fetch at most 5 pages
+   |
+   +-- success --> store in tuf_crawl_levels and advance offset
+   |
+   +-- 502/429/network failure --> stop this run without advancing
+   |
+   v
+finish the crawl over multiple invocations
+   |
+   +-- fetch References
+   |
+   v
 importTufSnapshot()
-        |
-        v
-PostgreSQL external_* / import_* tables
+   |
+   v
+publish one complete import_snapshot + external observations
 ```
 
-Normal HTTP requests are still handled by the same Worker through `fetch: app.fetch`.
+The staging tables are:
 
-Cron does not use a human administrator session. It runs with `actorId: null` as a system job. In addition to the ordinary `TUF_IMPORT` audit entry, scheduled runs add `TUF_SCHEDULED_IMPORT` with the cron expression and scheduled execution time.
+- `tuf_crawl_state` — crawl ID, next offset, and observed total
+- `tuf_crawl_levels` — raw level JSON collected during the crawl
+
+Partial crawl data never becomes an `import_snapshot`, so an upstream failure cannot make a 500-row partial crawl appear as the latest snapshot.
+
+## Consistency guard
+
+Levels are fetched with `RECENT_ASC`. New levels are expected to append, so an increasing total is allowed.
+
+At the start of each Cron invocation, the crawler refetches the previous page and compares its level-ID sequence with the staged boundary. If deletion/reordering shifts the boundary, or if the total decreases, the staged crawl is discarded and the next invocation restarts from offset 0.
+
+A PostgreSQL advisory lock prevents overlapping Cron invocations from advancing the same crawl concurrently.
+
+## When the TUF API is down
+
+The scheduled crawler deliberately does not perform a large retry storm inside one invocation. If a level page or the References endpoint fails, the step returns `DEFERRED` and waits for the next 30-minute tick at the same offset.
+
+For expected upstream failures the Worker calls `controller.noRetry()` instead of requesting an immediate platform retry.
 
 ## Data boundary
 
-Scheduled imports use the same TUF fetch/import core as manual imports.
+After a complete crawl, the existing `importTufSnapshot()` importer performs the normal external-observation import.
 
-The scheduled job only stores external observations:
+Scheduled imports may write only:
 
 - `import_snapshots`
 - `external_level_observations`
 - `external_rating_observations`
 - `external_reference_observations`
 - `import_issues`
-- `external_level_ids` links when an exact SHA-256 match permits one
+- `external_level_ids` links when exact SHA-256 matching permits them
 
-**The scheduled importer does not modify `canonical_ratings` or `difficulty_references`.** A TUF difficulty is never automatically promoted to an ELF canonical rating.
+**They do not modify `canonical_ratings` or `difficulty_references`.**
+
+Cron does not use a human administrator session and runs with `actorId: null`. Completed scheduled snapshots retain the normal `TUF_IMPORT` audit entry and add `TUF_SCHEDULED_IMPORT`.
 
 ## Local testing
 
-`npm run dev:api` starts Wrangler with `--test-scheduled`.
+The incremental crawler adds staging tables, so apply migrations first:
 
 ```powershell
+npm run setup:local
 npm run dev:api
 ```
 
-From another terminal, invoke the scheduled handler with:
+From another terminal:
 
 ```powershell
 curl.exe "http://localhost:8787/cdn-cgi/handler/scheduled?format=json"
 ```
 
-This is not a dry-run: it **fetches TUF and writes a snapshot to the local database**.
+One invocation normally stages at most 500 rows rather than completing a snapshot. Repeated invocations advance the crawl. This is not a dry-run.
 
-For ordinary static validation without calling the external API:
+Static validation:
 
 ```powershell
 npm test
 ```
 
-`scripts/smoke-cron.mjs` checks the Worker entrypoint, Cron configuration, system execution path, and external-data isolation boundary.
+## Parallel npm work
 
-## Production deployment
+Independent work now runs concurrently:
 
-The API Wrangler configuration generated by `npm run production:setup` / `npm run production:deploy` contains the same Cron Trigger. There is no need to add another trigger manually in the Cloudflare Dashboard.
+- `npm run build` — shared / API / public / admin in parallel
+- `npm run smoke` — static smoke scripts in parallel
+- `npm test` — parallel build, then parallel smoke
+- `npm run production:deploy` — four builds in parallel, then API / public / admin deploys in parallel
 
-For Workers managed with Wrangler, the Wrangler configuration should remain the source of truth for Cron Triggers.
+Dependency boundaries such as `build -> smoke` and `build -> deploy` remain sequential.
