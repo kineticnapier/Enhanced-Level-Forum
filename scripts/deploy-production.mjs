@@ -4,13 +4,30 @@ import { spawnSync } from 'node:child_process'
 import { loadProductionConfig, writeApiSecretsFile, writeProductionWranglerConfigs } from './production-config.mjs'
 import { ROOT_DIR } from './local-env.mjs'
 
-function executable(command) {
-  return process.platform === 'win32' && ['npm', 'npx'].includes(command) ? `${command}.cmd` : command
+function invocation(command, args) {
+  if (process.platform === 'win32' && ['npm', 'npx'].includes(command)) {
+    const npmCli = process.env.npm_execpath
+    if (!npmCli) {
+      throw new Error(`Cannot launch ${command} safely on Windows because npm_execpath is unavailable. Run this script through npm run.`)
+    }
+    if (command === 'npm') return { executable: process.execPath, args: [npmCli, ...args] }
+    return { executable: process.execPath, args: [npmCli, 'exec', '--', ...args] }
+  }
+  return { executable: command, args }
 }
 
 function run(command, args, { cwd = ROOT_DIR, env = process.env } = {}) {
   console.log(`\n> ${command} ${args.join(' ')}`)
-  const result = spawnSync(executable(command), args, { cwd, env, stdio: 'inherit', shell: false })
+
+  let call
+  try {
+    call = invocation(command, args)
+  } catch (error) {
+    console.error(error?.message ?? error)
+    process.exit(1)
+  }
+
+  const result = spawnSync(call.executable, call.args, { cwd, env, stdio: 'inherit', shell: false })
   if (result.error) {
     console.error(result.error.message)
     process.exit(1)
