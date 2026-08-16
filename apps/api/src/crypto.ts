@@ -46,11 +46,18 @@ export async function verifyPassword(password: string, encoded: string): Promise
   const [algorithm, iterationText, saltText, hashText] = encoded.split('$')
   if (algorithm !== 'pbkdf2-sha256' || !iterationText || !saltText || !hashText) return false
   const iterations = Number(iterationText)
-  // Cloudflare Workers currently rejects PBKDF2 iteration counts above 100,000.
-  // Legacy 210k hashes must be reset out-of-band before production login.
-  if (!Number.isInteger(iterations) || iterations < PBKDF2_ITERATIONS || iterations > PBKDF2_ITERATIONS) return false
+  if (!Number.isInteger(iterations) || iterations < PBKDF2_ITERATIONS) return false
   const salt = fromBase64Url(saltText)
   const expected = fromBase64Url(hashText)
+
+  // Workers rejects PBKDF2 counts above 100k. Still perform the supported
+  // amount of work before rejecting a legacy hash so nonexistent/legacy-user
+  // paths do not become an immediate timing shortcut.
+  if (iterations > PBKDF2_ITERATIONS) {
+    await pbkdf2Sha256(password, salt, PBKDF2_ITERATIONS, expected.byteLength)
+    return false
+  }
+
   const actual = await pbkdf2Sha256(password, salt, iterations, expected.byteLength)
   if (actual.byteLength !== expected.byteLength) return false
   return timingSafeEqual(actual, expected)
