@@ -55,26 +55,26 @@ try {
     `SELECT id,email,display_name,role,is_active FROM users WHERE lower(email)=$1 FOR UPDATE`,
     [email],
   )
+
   if (existing.rowCount) {
     const row = existing.rows[0]
-    if (row.role === 'ADMIN' && row.is_active === true) {
-      await client.query('ROLLBACK')
-      console.log(`Active ADMIN already exists for ${email}; no changes made.`)
-      process.exit(0)
+    if (row.role !== 'ADMIN' || row.is_active !== true) {
+      throw new Error(`A user already exists for ${email} with role=${row.role}, active=${row.is_active}. Refusing to promote or reactivate it silently.`)
     }
-    throw new Error(`A user already exists for ${email} with role=${row.role}, active=${row.is_active}. Refusing to promote or reactivate it silently.`)
+    await client.query('ROLLBACK')
+    console.log(`Active ADMIN already exists for ${email}; no changes made.`)
+  } else {
+    const passwordHash = hashPassword(password)
+    const inserted = await client.query(
+      `INSERT INTO users(email,display_name,role,password_hash,is_active,password_changed_at)
+       VALUES ($1,$2,'ADMIN',$3,true,now())
+       RETURNING id,email,display_name,role`,
+      [email, displayName, passwordHash],
+    )
+    await client.query('COMMIT')
+    const row = inserted.rows[0]
+    console.log(`Created production ADMIN ${row.display_name} <${row.email}> (${row.id}).`)
   }
-
-  const passwordHash = hashPassword(password)
-  const inserted = await client.query(
-    `INSERT INTO users(email,display_name,role,password_hash,is_active,password_changed_at)
-     VALUES ($1,$2,'ADMIN',$3,true,now())
-     RETURNING id,email,display_name,role`,
-    [email, displayName, passwordHash],
-  )
-  await client.query('COMMIT')
-  const row = inserted.rows[0]
-  console.log(`Created production ADMIN ${row.display_name} <${row.email}> (${row.id}).`)
 } catch (error) {
   await client.query('ROLLBACK').catch(() => undefined)
   console.error(error instanceof Error ? error.message : error)
