@@ -37,76 +37,87 @@ export async function audit(
   )
 }
 
+export type CanonicalRatingPublishInput = {
+  levelVersionId: string
+  expectedLevelId?: string
+  family: Family
+  tier: number
+  confidence: number | null
+  reason: string | null
+  actorId: string | null
+}
+
+/**
+ * Apply a canonical rating change using the caller's existing transaction.
+ * Use publishCanonicalRating() for ordinary standalone writes.
+ */
+export async function publishCanonicalRatingInTransaction(
+  db: DbClient,
+  input: CanonicalRatingPublishInput,
+) {
+  const version = await db.query(
+    `SELECT lv.id, lv.level_id
+     FROM level_versions lv
+     WHERE lv.id = $1`,
+    [input.levelVersionId],
+  )
+  if (!version.rowCount) throw new Error('Level version not found')
+  if (input.expectedLevelId && version.rows[0].level_id !== input.expectedLevelId) {
+    throw new Error('Level version does not belong to requested level')
+  }
+
+  await db.query(
+    `UPDATE canonical_ratings
+     SET effective_to = now()
+     WHERE level_version_id = $1 AND effective_to IS NULL`,
+    [input.levelVersionId],
+  )
+
+  const inserted = await db.query(
+    `INSERT INTO canonical_ratings(level_version_id, family, tier, confidence, reason, decided_by)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     RETURNING *`,
+    [input.levelVersionId, input.family, input.tier, input.confidence, input.reason, input.actorId],
+  )
+
+  const staleRefs = await db.query(
+    `UPDATE difficulty_references
+     SET status = 'NEEDS_REVIEW', updated_at = now()
+     WHERE level_version_id = $1
+       AND status = 'ACTIVE'
+       AND (family <> $2 OR tier <> $3)
+     RETURNING *`,
+    [input.levelVersionId, input.family, input.tier],
+  )
+
+  for (const ref of staleRefs.rows) {
+    await db.query(
+      `INSERT INTO reference_history(reference_id, action, old_data, new_data, actor_id)
+       VALUES ($1, 'AUTO_REVIEW_AFTER_RERATE', $2::jsonb, $3::jsonb, $4)`,
+      [
+        ref.id,
+        JSON.stringify({ status: 'ACTIVE', family: ref.family, tier: ref.tier }),
+        JSON.stringify({ status: 'NEEDS_REVIEW', reason: 'Canonical rating moved outside reference slot' }),
+        input.actorId,
+      ],
+    )
+  }
+
+  await audit(db, input.actorId, 'CANONICAL_RERATE', 'level_version', input.levelVersionId, {
+    family: input.family,
+    tier: input.tier,
+    confidence: input.confidence,
+    staleReferenceIds: staleRefs.rows.map((row) => row.id),
+  })
+
+  return { rating: inserted.rows[0], staleReferenceIds: staleRefs.rows.map((row) => row.id) }
+}
+
 export async function publishCanonicalRating(
   db: DbClient,
-  input: {
-    levelVersionId: string
-    expectedLevelId?: string
-    family: Family
-    tier: number
-    confidence: number | null
-    reason: string | null
-    actorId: string | null
-  },
+  input: CanonicalRatingPublishInput,
 ) {
-  return inTransaction(db, async () => {
-    const version = await db.query(
-      `SELECT lv.id, lv.level_id
-       FROM level_versions lv
-       WHERE lv.id = $1`,
-      [input.levelVersionId],
-    )
-    if (!version.rowCount) throw new Error('Level version not found')
-    if (input.expectedLevelId && version.rows[0].level_id !== input.expectedLevelId) {
-      throw new Error('Level version does not belong to requested level')
-    }
-
-    await db.query(
-      `UPDATE canonical_ratings
-       SET effective_to = now()
-       WHERE level_version_id = $1 AND effective_to IS NULL`,
-      [input.levelVersionId],
-    )
-
-    const inserted = await db.query(
-      `INSERT INTO canonical_ratings(level_version_id, family, tier, confidence, reason, decided_by)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       RETURNING *`,
-      [input.levelVersionId, input.family, input.tier, input.confidence, input.reason, input.actorId],
-    )
-
-    const staleRefs = await db.query(
-      `UPDATE difficulty_references
-       SET status = 'NEEDS_REVIEW', updated_at = now()
-       WHERE level_version_id = $1
-         AND status = 'ACTIVE'
-         AND (family <> $2 OR tier <> $3)
-       RETURNING *`,
-      [input.levelVersionId, input.family, input.tier],
-    )
-
-    for (const ref of staleRefs.rows) {
-      await db.query(
-        `INSERT INTO reference_history(reference_id, action, old_data, new_data, actor_id)
-         VALUES ($1, 'AUTO_REVIEW_AFTER_RERATE', $2::jsonb, $3::jsonb, $4)`,
-        [
-          ref.id,
-          JSON.stringify({ status: 'ACTIVE', family: ref.family, tier: ref.tier }),
-          JSON.stringify({ status: 'NEEDS_REVIEW', reason: 'Canonical rating moved outside reference slot' }),
-          input.actorId,
-        ],
-      )
-    }
-
-    await audit(db, input.actorId, 'CANONICAL_RERATE', 'level_version', input.levelVersionId, {
-      family: input.family,
-      tier: input.tier,
-      confidence: input.confidence,
-      staleReferenceIds: staleRefs.rows.map((row) => row.id),
-    })
-
-    return { rating: inserted.rows[0], staleReferenceIds: staleRefs.rows.map((row) => row.id) }
-  })
+  return inTransaction(db, () => publishCanonicalRatingInTransaction(db, input))
 }
 
 export async function updateReferenceStatus(
