@@ -35,6 +35,9 @@ export interface RatingQueueItem {
   levelId: string
   levelVersionId: string
   versionLabel: string
+  sha256: string | null
+  downloadUrl: string | null
+  videoUrl: string | null
   song: string
   artist: string
   creator: string
