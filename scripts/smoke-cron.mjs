@@ -4,6 +4,11 @@ const worker = await readFile(new URL('../apps/api/src/worker.ts', import.meta.u
 const scheduled = await readFile(new URL('../apps/api/src/importers/tuf-scheduled.ts', import.meta.url), 'utf8')
 const importer = await readFile(new URL('../apps/api/src/importers/tuf.ts', import.meta.url), 'utf8')
 const migration = await readFile(new URL('../db/migrations/005_tuf_incremental_crawl.sql', import.meta.url), 'utf8')
+const statusMigration = await readFile(new URL('../db/migrations/008_tuf_cron_status.sql', import.meta.url), 'utf8')
+const statusApi = await readFile(new URL('../apps/api/src/tuf-cron-status.ts', import.meta.url), 'utf8')
+const entry = await readFile(new URL('../apps/api/src/entry.ts', import.meta.url), 'utf8')
+const adminStatus = await readFile(new URL('../apps/admin/src/TufCronStatus.tsx', import.meta.url), 'utf8')
+const reconciliation = await readFile(new URL('../apps/admin/src/TufReconciliation.tsx', import.meta.url), 'utf8')
 const wrangler = await readFile(new URL('../apps/api/wrangler.jsonc', import.meta.url), 'utf8')
 const productionConfig = await readFile(new URL('./production-config.mjs', import.meta.url), 'utf8')
 const devApi = await readFile(new URL('./dev-api.mjs', import.meta.url), 'utf8')
@@ -33,6 +38,9 @@ for (const invariant of [
   "'TUF_SCHEDULED_IMPORT'",
   "status: 'DEFERRED'",
   "status: 'PROGRESS'",
+  'persistCronStatus',
+  "status = result?.status ?? 'FAILED'",
+  'consecutive_deferred',
 ]) {
   if (!scheduled.includes(invariant)) throw new Error(`incremental TUF crawl invariant missing: ${invariant}`)
 }
@@ -40,6 +48,25 @@ for (const invariant of [
 for (const invariant of ['CREATE TABLE IF NOT EXISTS tuf_crawl_state', 'CREATE TABLE IF NOT EXISTS tuf_crawl_levels']) {
   if (!migration.includes(invariant)) throw new Error(`incremental TUF migration missing: ${invariant}`)
 }
+for (const invariant of ['last_run_at', 'last_status', 'last_reason', 'last_snapshot_id', 'consecutive_deferred', "'FAILED'"]) {
+  if (!statusMigration.includes(invariant)) throw new Error(`TUF Cron status migration missing: ${invariant}`)
+}
+
+for (const invariant of [
+  "app.get('/api/admin/imports/tuf/cron-status'",
+  "const CRON_SCHEDULE = '*/30 * * * *'",
+  'trackingAvailable',
+  "return 'STALE'",
+  'latestSnapshot',
+  'stagedLevels',
+]) {
+  if (!statusApi.includes(invariant)) throw new Error(`TUF Cron status API missing: ${invariant}`)
+}
+if (!entry.includes('registerTufCronStatusRoutes(app)')) throw new Error('TUF Cron status routes are not registered')
+for (const invariant of ['/admin/imports/tuf/cron-status', 'TUF Cron Status', 'Consecutive deferred', '60_000']) {
+  if (!adminStatus.includes(invariant)) throw new Error(`TUF Cron admin panel missing: ${invariant}`)
+}
+if (!reconciliation.includes('<TufCronStatus/>')) throw new Error('TUF reconciliation must show Cron status')
 
 for (const forbidden of ['canonical_ratings', 'difficulty_references']) {
   if (scheduled.includes(forbidden)) throw new Error(`scheduled crawler must stay outside canonical data: ${forbidden}`)
@@ -69,4 +96,5 @@ if (deploy.includes("runParallel('Deploy'")) throw new Error('production deploy 
 
 console.log('TUF CRON STATIC SMOKE PASSED')
 console.log('every 30 minutes -> 5 pages per step -> persistent staging -> complete external snapshot only')
+console.log('Admin Imports shows persisted last tick/status/progress/snapshot health without touching canonical data')
 console.log('npm build/smoke + production build run independent jobs in parallel; Wrangler deploy is sequential')
