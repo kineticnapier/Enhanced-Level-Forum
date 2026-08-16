@@ -121,13 +121,157 @@ export async function listTufUnlinked(
   }
 }
 
-export async function linkTufObservation(
+type LinkInput = { observationId: string; levelId: string; levelVersionId?: string | null; actorId: string | null }
+
+async function linkTufObservationInTransaction(db: DbClient, input: LinkInput) {
+  const observationResult = await db.query(
+    `SELECT id,snapshot_id,external_id,sha256,title,creator,difficulty_label,linked_level_id
+     FROM external_level_observations
+     WHERE id=$1 AND source='TUF'
+     FOR UPDATE`,
+    [input.observationId],
+  )
+  if (!observationResult.rowCount) throw new TufReconciliationError(404, 'TUF observation not found')
+  const observation = observationResult.rows[0]
+  if (observation.linked_level_id && observation.linked_level_id !== input.levelId) {
+    throw new TufReconciliationError(409, 'This TUF observation is already linked to a different ELF level')
+  }
+
+  const levelResult = await db.query(`SELECT id,title,creator FROM levels WHERE id=$1 AND status<>'ARCHIVED'`, [input.levelId])
+  if (!levelResult.rowCount) throw new TufReconciliationError(404, 'ELF level not found')
+  const level = levelResult.rows[0]
+
+  let version: { id: string; label: string; sha256: string | null } | null = null
+  if (input.levelVersionId) {
+    const versionResult = await db.query(
+      `SELECT id,label,sha256 FROM level_versions WHERE id=$1 AND level_id=$2`,
+      [input.levelVersionId, input.levelId],
+    )
+    if (!versionResult.rowCount) {
+      throw new TufReconciliationError(400, 'Selected ELF version does not belong to the selected level')
+    }
+    const selectedVersion = versionResult.rows[0] as { id: string; label: string; sha256: string | null }
+    version = selectedVersion
+    if (observation.sha256 && selectedVersion.sha256 && observation.sha256.toLowerCase() !== selectedVersion.sha256.toLowerCase()) {
+      throw new TufReconciliationError(409, 'TUF SHA-256 conflicts with the selected ELF version SHA-256')
+    }
+  }
+
+  const mappingResult = await db.query(
+    `INSERT INTO external_level_ids(level_id,source,external_id)
+     VALUES ($1,'TUF',$2)
+     ON CONFLICT(source,external_id)
+     DO UPDATE SET level_id=external_level_ids.level_id
+     RETURNING level_id`,
+    [input.levelId, observation.external_id],
+  )
+  if (mappingResult.rows[0]?.level_id !== input.levelId) {
+    throw new TufReconciliationError(409, 'This TUF ID is already mapped to a different ELF level')
+  }
+
+  await Promise.all([
+    db.query(
+      `UPDATE external_level_observations
+       SET linked_level_id=$1
+       WHERE source='TUF' AND external_id=$2`,
+      [input.levelId, observation.external_id],
+    ),
+    db.query(
+      `UPDATE external_rating_observations
+       SET level_id=$1
+       WHERE source='TUF' AND external_id=$2`,
+      [input.levelId, observation.external_id],
+    ),
+    db.query(
+      `UPDATE external_reference_observations
+       SET linked_level_id=$1
+       WHERE source='TUF' AND external_id=$2`,
+      [input.levelId, observation.external_id],
+    ),
+    db.query(
+      `UPDATE import_issues
+       SET linked_level_id=$1
+       WHERE source='TUF' AND external_id=$2`,
+      [input.levelId, observation.external_id],
+    ),
+  ])
+
+  if (version) {
+    await Promise.all([
+      db.query(
+        `UPDATE external_level_observations
+         SET linked_level_version_id=$1
+         WHERE snapshot_id=$2 AND source='TUF' AND external_id=$3`,
+        [version.id, observation.snapshot_id, observation.external_id],
+      ),
+      db.query(
+        `UPDATE external_rating_observations
+         SET level_version_id=$1
+         WHERE snapshot_id=$2 AND source='TUF' AND external_id=$3`,
+        [version.id, observation.snapshot_id, observation.external_id],
+      ),
+      db.query(
+        `UPDATE external_reference_observations
+         SET linked_level_version_id=$1
+         WHERE snapshot_id=$2 AND source='TUF' AND external_id=$3`,
+        [version.id, observation.snapshot_id, observation.external_id],
+      ),
+      db.query(
+        `UPDATE import_issues
+         SET linked_level_version_id=$1
+         WHERE snapshot_id=$2 AND source='TUF' AND external_id=$3`,
+        [version.id, observation.snapshot_id, observation.external_id],
+      ),
+    ])
+  }
+
+  await audit(db, input.actorId, 'TUF_MANUAL_LINK', 'external_level_observation', observation.id, {
+    snapshotId: observation.snapshot_id,
+    externalId: observation.external_id,
+    tufTitle: observation.title,
+    tufCreator: observation.creator,
+    tufDifficulty: observation.difficulty_label,
+    tufSha256: observation.sha256,
+    levelId: level.id,
+    levelTitle: level.title,
+    levelVersionId: version?.id ?? null,
+    levelVersionLabel: version?.label ?? null,
+    levelVersionSha256: version?.sha256 ?? null,
+  })
+
+  return {
+    observation: {
+      id: observation.id,
+      snapshotId: observation.snapshot_id,
+      externalId: observation.external_id,
+    },
+    level: { id: level.id, title: level.title, creator: level.creator },
+    version: version ? { id: version.id, label: version.label, sha256: version.sha256 } : null,
+  }
+}
+
+export async function linkTufObservation(db: DbClient, input: LinkInput) {
+  return inTransaction(db, () => linkTufObservationInTransaction(db, input))
+}
+
+export async function createLevelFromTufObservation(
   db: DbClient,
-  input: { observationId: string; levelId: string; levelVersionId?: string | null; actorId: string | null },
+  input: {
+    observationId: string
+    song?: string | null
+    title?: string | null
+    creator?: string | null
+    status?: string | null
+    versionLabel?: string | null
+    sha256?: string | null
+    downloadUrl?: string | null
+    notes?: string | null
+    actorId: string | null
+  },
 ) {
   return inTransaction(db, async () => {
     const observationResult = await db.query(
-      `SELECT id,snapshot_id,external_id,sha256,title,creator,difficulty_label
+      `SELECT id,snapshot_id,external_id,sha256,song,title,creator,download_url,difficulty_label,linked_level_id
        FROM external_level_observations
        WHERE id=$1 AND source='TUF'
        FOR UPDATE`,
@@ -135,117 +279,74 @@ export async function linkTufObservation(
     )
     if (!observationResult.rowCount) throw new TufReconciliationError(404, 'TUF observation not found')
     const observation = observationResult.rows[0]
+    if (observation.linked_level_id) throw new TufReconciliationError(409, 'TUF observation is already linked to an ELF level')
 
-    const levelResult = await db.query(`SELECT id,title,creator FROM levels WHERE id=$1 AND status<>'ARCHIVED'`, [input.levelId])
-    if (!levelResult.rowCount) throw new TufReconciliationError(404, 'ELF level not found')
-    const level = levelResult.rows[0]
-
-    let version: { id: string; label: string; sha256: string | null } | null = null
-    if (input.levelVersionId) {
-      const versionResult = await db.query(
-        `SELECT id,label,sha256 FROM level_versions WHERE id=$1 AND level_id=$2`,
-        [input.levelVersionId, input.levelId],
-      )
-      if (!versionResult.rowCount) {
-        throw new TufReconciliationError(400, 'Selected ELF version does not belong to the selected level')
-      }
-      const selectedVersion = versionResult.rows[0] as { id: string; label: string; sha256: string | null }
-      version = selectedVersion
-      if (observation.sha256 && selectedVersion.sha256 && observation.sha256.toLowerCase() !== selectedVersion.sha256.toLowerCase()) {
-        throw new TufReconciliationError(409, 'TUF SHA-256 conflicts with the selected ELF version SHA-256')
-      }
-    }
-
-    const mappingResult = await db.query(
-      `INSERT INTO external_level_ids(level_id,source,external_id)
-       VALUES ($1,'TUF',$2)
-       ON CONFLICT(source,external_id)
-       DO UPDATE SET level_id=external_level_ids.level_id
-       RETURNING level_id`,
-      [input.levelId, observation.external_id],
+    const existingMapping = await db.query(
+      `SELECT level_id FROM external_level_ids WHERE source='TUF' AND external_id=$1 FOR UPDATE`,
+      [observation.external_id],
     )
-    if (mappingResult.rows[0]?.level_id !== input.levelId) {
-      throw new TufReconciliationError(409, 'This TUF ID is already mapped to a different ELF level')
+    if (existingMapping.rowCount) {
+      throw new TufReconciliationError(409, 'This TUF ID is already mapped to an ELF level; reconcile it instead of creating a duplicate')
     }
 
-    await Promise.all([
-      db.query(
-        `UPDATE external_level_observations
-         SET linked_level_id=$1
-         WHERE source='TUF' AND external_id=$2`,
-        [input.levelId, observation.external_id],
-      ),
-      db.query(
-        `UPDATE external_rating_observations
-         SET level_id=$1
-         WHERE source='TUF' AND external_id=$2`,
-        [input.levelId, observation.external_id],
-      ),
-      db.query(
-        `UPDATE external_reference_observations
-         SET linked_level_id=$1
-         WHERE source='TUF' AND external_id=$2`,
-        [input.levelId, observation.external_id],
-      ),
-      db.query(
-        `UPDATE import_issues
-         SET linked_level_id=$1
-         WHERE source='TUF' AND external_id=$2`,
-        [input.levelId, observation.external_id],
-      ),
-    ])
+    const song = input.song?.trim() || observation.song?.trim() || observation.title?.trim() || `TUF #${observation.external_id}`
+    const title = input.title?.trim() || observation.title?.trim() || observation.song?.trim() || `TUF #${observation.external_id}`
+    const creator = input.creator?.trim() || observation.creator?.trim() || 'Unknown'
+    const versionLabel = input.versionLabel?.trim() || 'Original'
+    const status = input.status?.trim() || 'LISTED'
+    if (!['LISTED','UNLISTED','ARCHIVED'].includes(status)) throw new TufReconciliationError(400, 'Invalid level status')
 
-    if (version) {
-      await Promise.all([
-        db.query(
-          `UPDATE external_level_observations
-           SET linked_level_version_id=$1
-           WHERE snapshot_id=$2 AND source='TUF' AND external_id=$3`,
-          [version.id, observation.snapshot_id, observation.external_id],
-        ),
-        db.query(
-          `UPDATE external_rating_observations
-           SET level_version_id=$1
-           WHERE snapshot_id=$2 AND source='TUF' AND external_id=$3`,
-          [version.id, observation.snapshot_id, observation.external_id],
-        ),
-        db.query(
-          `UPDATE external_reference_observations
-           SET linked_level_version_id=$1
-           WHERE snapshot_id=$2 AND source='TUF' AND external_id=$3`,
-          [version.id, observation.snapshot_id, observation.external_id],
-        ),
-        db.query(
-          `UPDATE import_issues
-           SET linked_level_version_id=$1
-           WHERE snapshot_id=$2 AND source='TUF' AND external_id=$3`,
-          [version.id, observation.snapshot_id, observation.external_id],
-        ),
-      ])
+    const suppliedSha = input.sha256 === undefined ? observation.sha256 : input.sha256?.trim() || null
+    if (suppliedSha && !/^[a-fA-F0-9]{64}$/.test(suppliedSha)) throw new TufReconciliationError(400, 'sha256 must be 64 hex chars or null')
+    if (observation.sha256 && suppliedSha && observation.sha256.toLowerCase() !== suppliedSha.toLowerCase()) {
+      throw new TufReconciliationError(409, 'Edited SHA-256 conflicts with the TUF observation; clear it or keep the imported SHA')
     }
+    const sha256 = suppliedSha?.toLowerCase() ?? null
+    const downloadUrl = input.downloadUrl === undefined ? observation.download_url : input.downloadUrl?.trim() || null
+    const notes = input.notes?.trim() || null
 
-    await audit(db, input.actorId, 'TUF_MANUAL_LINK', 'external_level_observation', observation.id, {
+    const levelResult = await db.query(
+      `INSERT INTO levels(song,title,creator,status) VALUES ($1,$2,$3,$4) RETURNING *`,
+      [song, title, creator, status],
+    )
+    const level = levelResult.rows[0]
+    const versionResult = await db.query(
+      `INSERT INTO level_versions(level_id,label,sha256,download_url,notes)
+       VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+      [level.id, versionLabel, sha256, downloadUrl, notes],
+    )
+    const version = versionResult.rows[0]
+    await db.query('UPDATE levels SET current_version_id=$2,updated_at=now() WHERE id=$1', [level.id, version.id])
+
+    await audit(db, input.actorId, 'LEVEL_CREATE', 'level', level.id, {
+      versionId: version.id,
+      source: 'TUF_RECONCILIATION',
+      sourceObservationId: observation.id,
+      externalId: observation.external_id,
+    })
+
+    const linked = await linkTufObservationInTransaction(db, {
+      observationId: observation.id,
+      levelId: level.id,
+      levelVersionId: version.id,
+      actorId: input.actorId,
+    })
+
+    await audit(db, input.actorId, 'TUF_CREATE_LEVEL', 'level', level.id, {
+      observationId: observation.id,
       snapshotId: observation.snapshot_id,
       externalId: observation.external_id,
-      tufTitle: observation.title,
-      tufCreator: observation.creator,
       tufDifficulty: observation.difficulty_label,
-      tufSha256: observation.sha256,
-      levelId: level.id,
-      levelTitle: level.title,
-      levelVersionId: version?.id ?? null,
-      levelVersionLabel: version?.label ?? null,
-      levelVersionSha256: version?.sha256 ?? null,
+      importedSha256: observation.sha256,
+      createdVersionId: version.id,
+      canonicalRatingCreated: false,
     })
 
     return {
-      observation: {
-        id: observation.id,
-        snapshotId: observation.snapshot_id,
-        externalId: observation.external_id,
-      },
-      level: { id: level.id, title: level.title, creator: level.creator },
-      version: version ? { id: version.id, label: version.label, sha256: version.sha256 } : null,
+      ...linked,
+      level: { ...linked.level, song, status },
+      version: { id: version.id, label: version.label, sha256: version.sha256, downloadUrl: version.download_url, notes: version.notes },
+      canonicalRating: null,
     }
   })
 }
