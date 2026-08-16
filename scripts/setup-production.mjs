@@ -36,6 +36,8 @@ if (!config.databaseUrl) {
 }
 
 console.log('ELF Cloudflare production setup')
+console.log(`Mode:   ${config.deployMode}`)
+if (config.deployMode === 'workers_dev') console.log(`Account workers.dev subdomain: ${config.workersDevSubdomain}.workers.dev`)
 console.log(`Public: ${config.publicOrigin}`)
 console.log(`Admin:  ${config.adminOrigin}`)
 console.log(`API:    ${config.apiOrigin}`)
@@ -80,4 +82,7 @@ if (config.adminEmail && config.adminPassword) {
 
 await writeProductionWranglerConfigs(config)
 console.log('\nGenerated production Wrangler configs for API/public/admin.')
+if (config.deployMode === 'workers_dev') {
+  console.log('No purchased domain is required in workers.dev mode. You can switch to custom_domain later without recreating Hyperdrive.')
+}
 console.log('Setup complete. Review .env.production, then run: npm run production:deploy')
