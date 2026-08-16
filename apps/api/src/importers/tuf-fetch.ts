@@ -46,29 +46,36 @@ function retryableStatus(status: number): boolean {
   return status === 429 || status >= 500
 }
 
+async function retryDelay(attempt: number, problem: string) {
+  const delayMs = REQUEST_RETRY_BASE_MS * 2 ** (attempt - 1)
+  console.warn(
+    `[TUF import] transient request failure; retry ${attempt + 1}/${REQUEST_ATTEMPTS} in ${delayMs}ms: ${problem}`,
+  )
+  await sleep(delayMs)
+}
+
 async function fetchJson(url: URL): Promise<any> {
   let lastProblem = `TUF API request failed: ${url.pathname}${url.search}`
 
   for (let attempt = 1; attempt <= REQUEST_ATTEMPTS; attempt++) {
+    let response: Response
     try {
-      const response = await fetch(url, { headers: { Accept: 'application/json' } })
-      if (response.ok) return response.json()
-
-      lastProblem = `TUF API ${response.status} ${response.statusText}: ${url.pathname}${url.search}`
-      if (!retryableStatus(response.status) || attempt === REQUEST_ATTEMPTS) {
-        throw new Error(lastProblem)
-      }
+      response = await fetch(url, { headers: { Accept: 'application/json' } })
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      lastProblem = message
+      lastProblem = error instanceof Error ? error.message : String(error)
       if (attempt === REQUEST_ATTEMPTS) throw error
+      await retryDelay(attempt, lastProblem)
+      continue
     }
 
-    const delayMs = REQUEST_RETRY_BASE_MS * 2 ** (attempt - 1)
-    console.warn(
-      `[TUF import] transient request failure; retry ${attempt + 1}/${REQUEST_ATTEMPTS} in ${delayMs}ms: ${lastProblem}`,
-    )
-    await sleep(delayMs)
+    if (response.ok) return await response.json()
+
+    lastProblem = `TUF API ${response.status} ${response.statusText}: ${url.pathname}${url.search}`
+    if (!retryableStatus(response.status) || attempt === REQUEST_ATTEMPTS) {
+      throw new Error(lastProblem)
+    }
+
+    await retryDelay(attempt, lastProblem)
   }
 
   throw new Error(lastProblem)
