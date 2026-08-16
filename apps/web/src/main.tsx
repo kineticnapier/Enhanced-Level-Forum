@@ -229,7 +229,7 @@ function Levels() {
 }
 
 function Level({ id, user }: { id: string; user: SessionUser | null }) {
-  const { t, date, lean } = useI18n()
+  const { t, date, lean, proposalType } = useI18n()
   const [level, setLevel] = useState<LevelDetail | null>(null)
   const [proposals, setProposals] = useState<ProposalRow[]>([])
   const [message, setMessage] = useState('')
@@ -276,14 +276,9 @@ function Level({ id, user }: { id: string; user: SessionUser | null }) {
 
     <div className="two-col">
       <div className="panel"><div className="title-row"><h2>{t('level.references')}</h2><a className="text-link" href={`#/references?level=${level.id}`}>{t('level.browseAll')}</a></div>{level.references.map((r) => <div className="ref-row" key={r.id}><RatingBadge family={r.family} tier={r.tier} /><div><strong>{r.technique}</strong><small>{r.versionLabel}{r.positionHint === null ? '' : ` · ${t('references.position', { value: r.positionHint })}`}</small></div><Status value={r.status} />{r.notes && <p>{r.notes}</p>}</div>)}{!level.references.length && <p className="muted">{t('level.notReference')}</p>}</div>
-      <div className="panel"><div className="title-row"><h2>{t('level.relatedProposals')}</h2><a className="text-link" href="#/proposals">{t('level.allProposals')}</a></div>{proposals.map((p) => <a className="related-proposal" href={`#/proposals/${p.id}`} key={p.id}><div><span className="pill">{useProposalTypeLabel(p.type)}</span><Status value={p.status} /><ExecutionState state={p.executionState} message={p.executionMessage} /></div><strong>{p.title}</strong><ProposalChange proposal={p} compact /></a>)}{!proposals.length && <p className="muted">{t('level.noProposals')}</p>}</div>
+      <div className="panel"><div className="title-row"><h2>{t('level.relatedProposals')}</h2><a className="text-link" href="#/proposals">{t('level.allProposals')}</a></div>{proposals.map((p) => <a className="related-proposal" href={`#/proposals/${p.id}`} key={p.id}><div><span className="pill">{proposalType(p.type)}</span><Status value={p.status} /><ExecutionState state={p.executionState} message={p.executionMessage} /></div><strong>{p.title}</strong><ProposalChange proposal={p} compact /></a>)}{!proposals.length && <p className="muted">{t('level.noProposals')}</p>}</div>
     </div>
   </section>
-}
-
-function useProposalTypeLabel(type: string) {
-  const { proposalType } = useI18n()
-  return proposalType(type)
 }
 
 function VoteBox({ level, onSaved }: { level: LevelDetail; onSaved: () => void }) {
