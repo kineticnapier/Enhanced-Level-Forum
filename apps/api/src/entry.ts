@@ -5,6 +5,7 @@ import { withDb } from './db'
 import { createTufRerateProposal, listTufEvidence, TufEvidenceError } from './evidence/tuf'
 import { importTufSnapshot, type TufRawSnapshot } from './importers/tuf'
 import { fetchConsistentTufSnapshot } from './importers/tuf-fetch'
+import { registerLevelMetadataCatalogRoutes, registerLevelMetadataRoutes } from './level-metadata'
 import { registerProductionAuth } from './production-auth'
 import { registerPublicRoutes } from './public'
 import { createLevelFromTufObservation, linkTufObservation, listTufUnlinked, TufReconciliationError } from './reconciliation/tuf'
@@ -28,12 +29,15 @@ type TufCreateLevelBody = {
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
-// Production security/auth routes are deliberately registered first. The core
-// application is then mounted for compatibility with the established v0.3 API.
-// Exact hardened auth/admin-user routes therefore win over their legacy copies.
+// Production security/auth routes are deliberately registered first. The
+// practical Level metadata compatibility layer is next so it can replace the
+// original v0.3 Level CRUD without removing old core routes. The core app then
+// remains available for rating, Reference, proposal, and compatibility APIs.
 const app = new Hono<AppBindings>()
 registerProductionAuth(app)
+registerLevelMetadataRoutes(app)
 app.route('/', coreApp)
+registerLevelMetadataCatalogRoutes(app)
 registerPublicRoutes(app)
 
 app.onError((error, c) => {
@@ -102,6 +106,8 @@ app.post('/api/admin/imports/tuf/link', requireRole('REFERENCE_MANAGER'), async 
   }
 })
 
+// Kept for backwards-compatible source/API documentation. The practical
+// metadata route is registered earlier and handles this path first.
 app.post('/api/admin/imports/tuf/create-level', requireRole('MODERATOR'), async (c) => {
   const user = c.get('user')!
   const body = await c.req.json<TufCreateLevelBody>().catch((): TufCreateLevelBody => ({}))
