@@ -103,11 +103,36 @@ export async function publishCanonicalRatingInTransaction(
     )
   }
 
+  // Publishing the staff-reviewed canonical value completes any active rating
+  // round for this Version. This keeps Review Ready from becoming another
+  // permanent backlog after the decision is made.
+  const queue = await db.query(
+    `SELECT id FROM rating_queue_items
+     WHERE level_version_id=$1 AND status<>'CLOSED'
+     FOR UPDATE`,
+    [input.levelVersionId],
+  )
+  if (queue.rowCount) {
+    await db.query(
+      `UPDATE rating_queue_claims
+       SET status='RELEASED',completed_at=COALESCE(completed_at,now()),updated_at=now()
+       WHERE queue_item_id=$1 AND status='ACTIVE'`,
+      [queue.rows[0].id],
+    )
+    await db.query(
+      `UPDATE rating_queue_items
+       SET status='CLOSED',closed_at=now(),updated_at=now()
+       WHERE id=$1`,
+      [queue.rows[0].id],
+    )
+  }
+
   await audit(db, input.actorId, 'CANONICAL_RERATE', 'level_version', input.levelVersionId, {
     family: input.family,
     tier: input.tier,
     confidence: input.confidence,
     staleReferenceIds: staleRefs.rows.map((row) => row.id),
+    closedRatingQueueItemId: queue.rows[0]?.id ?? null,
   })
 
   return { rating: inserted.rows[0], staleReferenceIds: staleRefs.rows.map((row) => row.id) }

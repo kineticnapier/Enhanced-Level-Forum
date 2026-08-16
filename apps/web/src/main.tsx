@@ -15,11 +15,12 @@ import type {
 } from '@elf/shared'
 import { api } from './api'
 import { I18nProvider, LanguageSwitch, useI18n } from './i18n'
+import { RatingQueuePage } from './RatingQueue'
 import './styles.css'
 import './public-level-detail.css'
 
 type Route = {
-  page: 'home' | 'levels' | 'level' | 'references' | 'proposals' | 'proposal' | 'login'
+  page: 'home' | 'levels' | 'level' | 'rating-queue' | 'references' | 'proposals' | 'proposal' | 'login'
   id?: string
 }
 
@@ -35,6 +36,7 @@ function parseRoute(): Route {
   const parts = raw.split('/').filter(Boolean)
   if (parts[0] === 'levels' && parts[1]) return { page: 'level', id: parts[1] }
   if (parts[0] === 'levels') return { page: 'levels' }
+  if (parts[0] === 'rating-queue') return { page: 'rating-queue' }
   if (parts[0] === 'references') return { page: 'references' }
   if (parts[0] === 'proposals' && parts[1]) return { page: 'proposal', id: parts[1] }
   if (parts[0] === 'proposals') return { page: 'proposals' }
@@ -122,12 +124,14 @@ function App() {
     .finally(() => setAuthLoaded(true))
 
   useEffect(() => { void refreshUser() }, [])
+  const canRate = !!user && ['RATER','REFERENCE_MANAGER','MODERATOR','ADMIN'].includes(user.role)
 
   return <div className="shell">
     <header className="topbar">
       <a className="brand" href="#/">ELF <span>Enhanced Level Forum</span></a>
       <nav>
         <a href="#/levels">{t('nav.levels')}</a>
+        {canRate && <a href="#/rating-queue">Rating Queue</a>}
         <a href="#/references">{t('nav.references')}</a>
         <a href="#/proposals">{t('nav.proposals')}</a>
       </nav>
@@ -142,7 +146,8 @@ function App() {
     <main>
       {route.page === 'home' && <Home />}
       {route.page === 'levels' && <Levels />}
-      {route.page === 'level' && route.id && <Level id={route.id} user={user} />}
+      {route.page === 'level' && route.id && <Level id={route.id} />}
+      {route.page === 'rating-queue' && <RatingQueuePage user={user} />}
       {route.page === 'references' && <References />}
       {route.page === 'proposals' && <Proposals user={user} />}
       {route.page === 'proposal' && route.id && <Proposal id={route.id} user={user} />}
@@ -229,11 +234,10 @@ function Levels() {
   </section>
 }
 
-function Level({ id, user }: { id: string; user: SessionUser | null }) {
+function Level({ id }: { id: string }) {
   const { t, date, lean, proposalType, locale } = useI18n()
   const [level, setLevel] = useState<LevelDetail | null>(null)
   const [proposals, setProposals] = useState<ProposalRow[]>([])
-  const [message, setMessage] = useState('')
   const [error, setError] = useState('')
   const load = async () => {
     setError('')
@@ -248,7 +252,6 @@ function Level({ id, user }: { id: string; user: SessionUser | null }) {
   useEffect(() => { void load() }, [id])
   if (error) return <div className="panel error">{error}</div>
   if (!level) return <div className="panel">{t('common.loading')}</div>
-  const canRate = user && ['RATER','REFERENCE_MANAGER','MODERATOR','ADMIN'].includes(user.role)
   const currentVersion = level.versions.find((version) => version.id === level.currentVersionId) ?? level.versions[0] ?? null
   const copy = locale === 'ja'
     ? { creator:'制作', effecter:'エフェクト', download:'配布ページ', video:'動画を見る', currentVersion:'現行バージョン' }
@@ -293,32 +296,11 @@ function Level({ id, user }: { id: string; user: SessionUser | null }) {
       {!!level.ratingVotes.length && <div className="vote-ledger">{level.ratingVotes.map((v) => <article key={`${v.userId}-${v.levelVersionId}-${v.family}`}><div><strong>{v.displayName}</strong><span>{v.versionLabel}</span><RatingBadge family={v.family} tier={v.anchorTier} /></div><p>{lean(v.lean)} · {t('level.confidence', { value: v.confidence })}</p>{v.comment && <blockquote>{v.comment}</blockquote>}</article>)}</div>}
     </div>
 
-    {canRate && <VoteBox level={level} onSaved={() => { setMessage(t('common.saved')); void load() }} />}
-    {message && <p className="notice">{message}</p>}
-
     <div className="two-col">
       <div className="panel"><div className="title-row"><h2>{t('level.references')}</h2><a className="text-link" href={`#/references?level=${level.id}`}>{t('level.browseAll')}</a></div>{level.references.map((r) => <div className="ref-row" key={r.id}><RatingBadge family={r.family} tier={r.tier} /><div><strong>{r.technique}</strong><small>{r.versionLabel}{r.positionHint === null ? '' : ` · ${t('references.position', { value: r.positionHint })}`}</small></div><Status value={r.status} />{r.notes && <p>{r.notes}</p>}</div>)}{!level.references.length && <p className="muted">{t('level.notReference')}</p>}</div>
       <div className="panel"><div className="title-row"><h2>{t('level.relatedProposals')}</h2><a className="text-link" href="#/proposals">{t('level.allProposals')}</a></div>{proposals.map((p) => <a className="related-proposal" href={`#/proposals/${p.id}`} key={p.id}><div><span className="pill">{proposalType(p.type)}</span><Status value={p.status} /><ExecutionState state={p.executionState} message={p.executionMessage} /></div><strong>{p.title}</strong><ProposalChange proposal={p} compact /></a>)}{!proposals.length && <p className="muted">{t('level.noProposals')}</p>}</div>
     </div>
   </section>
-}
-
-function VoteBox({ level, onSaved }: { level: LevelDetail; onSaved: () => void }) {
-  const { t, lean: leanLabel } = useI18n()
-  const defaultFamily = level.currentRating?.family ?? 'G'
-  const defaultTier = level.currentRating?.tier ?? 1
-  const [family, setFamily] = useState<Family>(defaultFamily)
-  const [tier, setTier] = useState(defaultTier)
-  const [lean, setLean] = useState(0)
-  const [confidence, setConfidence] = useState(3)
-  const [comment, setComment] = useState('')
-  const [error, setError] = useState('')
-  return <div className="panel vote-box"><h2>{t('vote.title')}</h2><p>{t('vote.description')}</p><div className="form-grid">
-    <label>{t('vote.family')}<select value={family} onChange={(e) => setFamily(e.target.value as Family)}><option>P</option><option>G</option><option>U</option></select></label>
-    <label>{t('vote.anchorTier')}<input type="number" min="1" max="30" value={tier} onChange={(e) => setTier(Number(e.target.value))} /></label>
-    <label>{t('vote.lean')}<select value={lean} onChange={(e) => setLean(Number(e.target.value))}>{[-2,-1,0,1,2].map((x) => <option key={x} value={x}>{leanLabel(x)}</option>)}</select></label>
-    <label>{t('vote.confidence')}<select value={confidence} onChange={(e) => setConfidence(Number(e.target.value))}>{[1,2,3,4,5].map((x) => <option key={x}>{x}</option>)}</select></label>
-  </div><textarea value={comment} onChange={(e) => setComment(e.target.value)} placeholder={t('vote.comment')} />{error && <p className="error">{error}</p>}<button onClick={async () => { try { await api(`/levels/${level.id}/votes`, { method:'POST', body: JSON.stringify({ family, anchorTier:tier, lean, confidence, comment }) }); setError(''); onSaved() } catch (e) { setError(e instanceof Error ? e.message : t('vote.failed')) } }}>{t('vote.save')}</button></div>
 }
 
 function References() {
