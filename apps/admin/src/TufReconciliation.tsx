@@ -29,7 +29,10 @@ type QueueResponse = {
 const PAGE_SIZE = 50
 
 export function TufReconciliation({canCreateLevel=false}:{canCreateLevel?:boolean}) {
-  const { t, date } = useI18n()
+  const { t, date, locale } = useI18n()
+  const meta = locale === 'ja'
+    ? { song:'曲名', artist:'アーティスト名', creator:'制作者 / チーム名', effecter:'エフェクター（任意）', version:'バージョン', sha:'SHA-256（任意）', download:'配布URL（任意）', video:'動画URL（任意）' }
+    : { song:'Song', artist:'Artist', creator:'Creator / team', effecter:'Effecter (optional)', version:'Version', sha:'SHA-256 (optional)', download:'Download URL (optional)', video:'Video URL (optional)' }
   const [queue,setQueue]=useState<QueueResponse|null>(null)
   const [search,setSearch]=useState('')
   const [offset,setOffset]=useState(0)
@@ -40,18 +43,20 @@ export function TufReconciliation({canCreateLevel=false}:{canCreateLevel?:boolea
   const [detail,setDetail]=useState<LevelDetail|null>(null)
   const [versionId,setVersionId]=useState('')
   const [createSong,setCreateSong]=useState('')
-  const [createTitle,setCreateTitle]=useState('')
+  const [createArtist,setCreateArtist]=useState('')
   const [createCreator,setCreateCreator]=useState('')
+  const [createEffecter,setCreateEffecter]=useState('')
   const [createVersionLabel,setCreateVersionLabel]=useState('Original')
   const [createSha,setCreateSha]=useState('')
   const [createUrl,setCreateUrl]=useState('')
+  const [createVideo,setCreateVideo]=useState('')
   const [busy,setBusy]=useState(false)
   const [message,setMessage]=useState('')
   const [error,setError]=useState('')
 
   const clearSelection=()=>{
     setSelected(null);setLevelId('');setDetail(null);setVersionId('');setLevels([])
-    setCreateSong('');setCreateTitle('');setCreateCreator('');setCreateVersionLabel('Original');setCreateSha('');setCreateUrl('')
+    setCreateSong('');setCreateArtist('');setCreateCreator('');setCreateEffecter('');setCreateVersionLabel('Original');setCreateSha('');setCreateUrl('');setCreateVideo('')
   }
 
   const loadQueue=async(nextOffset=offset,nextSearch=search)=>{
@@ -70,11 +75,15 @@ export function TufReconciliation({canCreateLevel=false}:{canCreateLevel?:boolea
     setCandidateSearch(initial)
     setLevels([]);setLevelId('');setDetail(null);setVersionId('');setMessage('');setError('')
     setCreateSong((row.song||row.title||`TUF #${row.externalId}`).trim())
-    setCreateTitle((row.title||row.song||`TUF #${row.externalId}`).trim())
+    // Current normalized TUF observations do not have a dedicated artist field.
+    // Leave it blank so a moderator confirms the actual artist before creation.
+    setCreateArtist('')
     setCreateCreator((row.creator||t('common.unknown')).trim())
+    setCreateEffecter('')
     setCreateVersionLabel('Original')
     setCreateSha(row.sha256??'')
     setCreateUrl(row.downloadUrl??'')
+    setCreateVideo('')
     if(initial)void searchLevels(initial)
   }
 
@@ -96,11 +105,11 @@ export function TufReconciliation({canCreateLevel=false}:{canCreateLevel?:boolea
     if(!selected||!levelId)return
     setBusy(true);setError('');setMessage('')
     try{
-      const result=await api<{level:{title:string};version:{label:string}|null}>('/admin/imports/tuf/link',{
+      const result=await api<{level:{song:string;title:string};version:{label:string}|null}>('/admin/imports/tuf/link',{
         method:'POST',
         body:JSON.stringify({observationId:selected.observationId,levelId,levelVersionId:versionId||null}),
       })
-      setMessage(t('tuf.linked',{id:selected.externalId,title:result.level.title,version:result.version?` / ${result.version.label}`:''}))
+      setMessage(t('tuf.linked',{id:selected.externalId,title:result.level.song,version:result.version?` / ${result.version.label}`:''}))
       clearSelection()
       await loadQueue(offset,search)
     }catch(e){setError(e instanceof Error?e.message:t('tuf.linkFailed'))}
@@ -111,17 +120,18 @@ export function TufReconciliation({canCreateLevel=false}:{canCreateLevel?:boolea
     if(!selected||!canCreateLevel)return
     setBusy(true);setError('');setMessage('')
     try{
-      const result=await api<{level:{id:string;title:string};version:{label:string};canonicalRating:null}>('/admin/imports/tuf/create-level',{
+      const result=await api<{level:{id:string;song:string};version:{label:string};canonicalRating:null}>('/admin/imports/tuf/create-level',{
         method:'POST',
         body:JSON.stringify({
           observationId:selected.observationId,
           song:createSong,
-          title:createTitle,
+          artist:createArtist,
           creator:createCreator,
-          version:{label:createVersionLabel,sha256:createSha||null,downloadUrl:createUrl||null},
+          effecter:createEffecter||null,
+          version:{label:createVersionLabel,sha256:createSha||null,downloadUrl:createUrl||null,videoUrl:createVideo||null},
         }),
       })
-      setMessage(t('tuf.created',{id:selected.externalId,title:result.level.title,version:result.version.label}))
+      setMessage(t('tuf.created',{id:selected.externalId,title:result.level.song,version:result.version.label}))
       clearSelection()
       await loadQueue(offset,search)
     }catch(e){setError(e instanceof Error?e.message:t('tuf.createFailed'))}
@@ -150,19 +160,22 @@ export function TufReconciliation({canCreateLevel=false}:{canCreateLevel?:boolea
           {selected.downloadUrl&&<p className="muted">{t('tuf.downloadPresent')}</p>}
           <h3>{t('tuf.findExisting')}</h3>
           <div className="grid"><input value={candidateSearch} onChange={(e)=>setCandidateSearch(e.target.value)} onKeyDown={(e)=>{if(e.key==='Enter')void searchLevels()}}/><button onClick={()=>void searchLevels()}>{t('tuf.find')}</button></div>
-          <select value={levelId} onChange={(e)=>void chooseLevel(e.target.value)}><option value="">{t('tuf.selectLevel')}</option>{levels.map((level)=><option key={level.id} value={level.id}>{level.currentRating?`${level.currentRating.family}${level.currentRating.tier} · `:''}{level.title} · {level.creator}</option>)}</select>
+          <select value={levelId} onChange={(e)=>void chooseLevel(e.target.value)}><option value="">{t('tuf.selectLevel')}</option>{levels.map((level)=><option key={level.id} value={level.id}>{level.currentRating?`${level.currentRating.family}${level.currentRating.tier} · `:''}{level.song} · {level.artist} · {level.creator}</option>)}</select>
           {detail&&<><h3>{t('tuf.versionLink')}</h3><select value={versionId} onChange={(e)=>setVersionId(e.target.value)}><option value="">{t('tuf.levelOnly')}</option>{detail.versions.map((version)=><option key={version.id} value={version.id}>{version.label}{version.id===detail.currentVersionId?` (${t('tuf.versionCurrent')})`:''} · {version.sha256??t('tuf.versionNoSha')}</option>)}</select><p className="muted">{t('tuf.versionLinkHelp')}</p></>}
           {shaConflict&&<p className="error">{t('tuf.shaConflict')}</p>}
           <button disabled={!levelId||busy||shaConflict} onClick={()=>void link()}>{busy?t('common.working'):t('tuf.link')}</button>
           <h3>{t('tuf.createNew')}</h3>
           {canCreateLevel?<>
             <p className="muted">{t('tuf.createHelp')}</p>
-            <input placeholder={t('tuf.createSong')} value={createSong} onChange={(e)=>setCreateSong(e.target.value)}/>
-            <input placeholder={t('tuf.createTitle')} value={createTitle} onChange={(e)=>setCreateTitle(e.target.value)}/>
-            <input placeholder={t('tuf.createCreator')} value={createCreator} onChange={(e)=>setCreateCreator(e.target.value)}/>
-            <div className="grid"><input placeholder={t('tuf.createVersion')} value={createVersionLabel} onChange={(e)=>setCreateVersionLabel(e.target.value)}/><input placeholder={t('tuf.createSha')} value={createSha} onChange={(e)=>setCreateSha(e.target.value)}/></div>
-            <input placeholder={t('tuf.createUrl')} value={createUrl} onChange={(e)=>setCreateUrl(e.target.value)}/>
-            <button disabled={busy||!createSong.trim()||!createTitle.trim()||!createCreator.trim()||!createVersionLabel.trim()} onClick={()=>void createLevel()}>{busy?t('common.working'):t('tuf.createButton')}</button>
+            <input placeholder={`${meta.song} *`} value={createSong} onChange={(e)=>setCreateSong(e.target.value)}/>
+            <input placeholder={`${meta.artist} *`} value={createArtist} onChange={(e)=>setCreateArtist(e.target.value)}/>
+            <input placeholder={`${meta.creator} *`} value={createCreator} onChange={(e)=>setCreateCreator(e.target.value)}/>
+            <input placeholder={meta.effecter} value={createEffecter} onChange={(e)=>setCreateEffecter(e.target.value)}/>
+            <input placeholder={`${meta.version} *`} value={createVersionLabel} onChange={(e)=>setCreateVersionLabel(e.target.value)}/>
+            <input placeholder={meta.download} value={createUrl} onChange={(e)=>setCreateUrl(e.target.value)}/>
+            <input placeholder={meta.video} value={createVideo} onChange={(e)=>setCreateVideo(e.target.value)}/>
+            <input placeholder={meta.sha} value={createSha} onChange={(e)=>setCreateSha(e.target.value)}/>
+            <button disabled={busy||!createSong.trim()||!createArtist.trim()||!createCreator.trim()||!createVersionLabel.trim()} onClick={()=>void createLevel()}>{busy?t('common.working'):t('tuf.createButton')}</button>
           </>:<p className="muted">{t('tuf.createPermission')}</p>}
         </div>:<p className="muted">{t('tuf.selectUnlinked')}</p>}</div>
       </div>}
