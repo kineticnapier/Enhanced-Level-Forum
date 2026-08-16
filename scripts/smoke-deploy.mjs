@@ -32,21 +32,26 @@ try {
     ELF_HYPERDRIVE_ID: '0123456789abcdef0123456789abcdef',
     AUTH_RATE_LIMIT_SALT: 'static-smoke-only-rate-limit-salt-0123456789',
   }
-
-  setEnv({
-    ...common,
-    ELF_DEPLOY_MODE: 'workers_dev',
-    ELF_WORKERS_DEV_SUBDOMAIN: 'elf-test-account',
-  })
-  const workersConfig = await loadProductionConfig({ requireHyperdrive: true, requireSecrets: true })
-  await writeProductionWranglerConfigs(workersConfig)
-  const workers = await readGenerated()
-
   const expectedWorkersOrigins = {
     public: 'https://enhanced-level-forum-web.elf-test-account.workers.dev',
     admin: 'https://enhanced-level-forum-admin.elf-test-account.workers.dev',
     api: 'https://enhanced-level-forum-api.elf-test-account.workers.dev',
   }
+
+  // Explicitly provide the derived values too, so an unrelated local
+  // .env.production cannot leak custom-domain origins into this static test.
+  setEnv({
+    ...common,
+    ELF_DEPLOY_MODE: 'workers_dev',
+    ELF_WORKERS_DEV_SUBDOMAIN: 'elf-test-account',
+    ELF_PUBLIC_ORIGIN: expectedWorkersOrigins.public,
+    ELF_ADMIN_ORIGIN: expectedWorkersOrigins.admin,
+    ELF_API_ORIGIN: expectedWorkersOrigins.api,
+  })
+  const workersConfig = await loadProductionConfig({ requireHyperdrive: true, requireSecrets: true })
+  await writeProductionWranglerConfigs(workersConfig)
+  const workers = await readGenerated()
+
   if (workersConfig.publicOrigin !== expectedWorkersOrigins.public || workersConfig.adminOrigin !== expectedWorkersOrigins.admin || workersConfig.apiOrigin !== expectedWorkersOrigins.api) {
     throw new Error('workers.dev origins were not derived from account subdomain')
   }
