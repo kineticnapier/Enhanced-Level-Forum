@@ -59,8 +59,11 @@ export interface PublicStats {
 export interface LevelListItem {
   id: string
   song: string
+  /** Legacy compatibility alias. New records default this to song. */
   title: string
+  artist: string
   creator: string
+  effecter: string | null
   status: string
   currentVersionId: string | null
   currentRating: { family: Family; tier: number; confidence: number | null } | null
@@ -87,6 +90,7 @@ export interface LevelDetail extends LevelListItem {
     label: string
     sha256: string | null
     downloadUrl: string | null
+    videoUrl: string | null
     notes: string | null
     createdAt: string
     currentRating: { family: Family; tier: number; confidence: number | null } | null

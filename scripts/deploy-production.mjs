@@ -1,8 +1,11 @@
 import { rm } from 'node:fs/promises'
 import { resolve } from 'node:path'
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { loadProductionConfig, writeApiSecretsFile, writeProductionWranglerConfigs } from './production-config.mjs'
 import { ROOT_DIR } from './local-env.mjs'
+
+const activeChildren = new Set()
+let shuttingDown = false
 
 function invocation(command, args) {
   if (process.platform === 'win32' && ['npm', 'npx'].includes(command)) {
@@ -16,6 +19,26 @@ function invocation(command, args) {
   return { executable: command, args }
 }
 
+function terminateTree(child, signal = 'SIGTERM') {
+  if (!child?.pid || child.exitCode !== null) return
+  if (process.platform === 'win32') {
+    spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true })
+    return
+  }
+  try { child.kill(signal) } catch { /* already gone */ }
+}
+
+function stopAll(signal) {
+  if (shuttingDown) return
+  shuttingDown = true
+  console.error(`\n[deploy] interrupted by ${signal}; terminating child processes...`)
+  for (const child of activeChildren) terminateTree(child, signal === 'SIGINT' ? 'SIGINT' : 'SIGTERM')
+  process.exit(signal === 'SIGINT' ? 130 : 143)
+}
+
+process.once('SIGINT', () => stopAll('SIGINT'))
+process.once('SIGTERM', () => stopAll('SIGTERM'))
+
 function run(command, args, { cwd = ROOT_DIR, env = process.env, label = `${command} ${args.join(' ')}` } = {}) {
   console.log(`\n> ${label}`)
   return new Promise((resolvePromise, reject) => {
@@ -28,8 +51,13 @@ function run(command, args, { cwd = ROOT_DIR, env = process.env, label = `${comm
     }
 
     const child = spawn(call.executable, call.args, { cwd, env, stdio: 'inherit', shell: false })
-    child.on('error', reject)
+    activeChildren.add(child)
+    child.on('error', (error) => {
+      activeChildren.delete(child)
+      reject(error)
+    })
     child.on('exit', (code, signal) => {
+      activeChildren.delete(child)
       if (code === 0) resolvePromise()
       else reject(new Error(`${label} failed (${signal ?? `exit ${code ?? 1}`})`))
     })
@@ -72,23 +100,10 @@ try {
     { command: 'npm', args: ['run', 'build'], options: { cwd: adminDir, env: frontendEnv, label: 'admin frontend build' } },
   ])
 
-  await runParallel('Deploy', [
-    {
-      command: 'npx',
-      args: ['wrangler', 'deploy', '--config', 'wrangler.production.generated.json', '--secrets-file', secretsPath],
-      options: { cwd: apiDir, label: 'API deploy' },
-    },
-    {
-      command: 'npx',
-      args: ['wrangler', 'deploy', '--config', 'wrangler.production.generated.json'],
-      options: { cwd: webDir, label: 'public frontend deploy' },
-    },
-    {
-      command: 'npx',
-      args: ['wrangler', 'deploy', '--config', 'wrangler.production.generated.json'],
-      options: { cwd: adminDir, label: 'admin frontend deploy' },
-    },
-  ])
+  console.log('\n=== Deploy (sequential) ===')
+  await run('npx', ['wrangler', 'deploy', '--config', 'wrangler.production.generated.json', '--secrets-file', secretsPath], { cwd: apiDir, label: 'API deploy' })
+  await run('npx', ['wrangler', 'deploy', '--config', 'wrangler.production.generated.json'], { cwd: webDir, label: 'public frontend deploy' })
+  await run('npx', ['wrangler', 'deploy', '--config', 'wrangler.production.generated.json'], { cwd: adminDir, label: 'admin frontend deploy' })
 } finally {
   await rm(secretsPath, { force: true }).catch(() => undefined)
 }

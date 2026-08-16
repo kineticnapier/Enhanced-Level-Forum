@@ -92,12 +92,14 @@ try {
     body: {
       observationId: observation.observationId,
       song: `Reviewed song ${suffix}`,
-      title: `Edited ELF title ${suffix}`,
-      creator: 'Reviewed ELF creator',
+      artist: 'Reviewed artist',
+      creator: 'Reviewed chart team',
+      effecter: 'Reviewed effecter',
       version: {
         label: 'Imported Original',
         sha256: sha,
         downloadUrl: 'https://example.invalid/reviewed.zip',
+        videoUrl: 'https://example.invalid/reviewed-video',
         notes: 'Created from TUF evidence after metadata review',
       },
     },
@@ -105,13 +107,19 @@ try {
   levelId = created.level.id
   const versionId = created.version.id
   if (created.canonicalRating !== null) throw new Error('TUF Level creation must not create canonical rating')
-  if (created.level.title !== `Edited ELF title ${suffix}` || created.level.creator !== 'Reviewed ELF creator') {
+  if (created.level.song !== `Reviewed song ${suffix}` || created.level.artist !== 'Reviewed artist' || created.level.creator !== 'Reviewed chart team' || created.level.effecter !== 'Reviewed effecter') {
     throw new Error(`edited ELF metadata was not preserved: ${JSON.stringify(created.level)}`)
   }
-  if (created.version.label !== 'Imported Original' || created.version.sha256 !== sha) throw new Error(`created Version is wrong: ${JSON.stringify(created.version)}`)
+  if (created.version.label !== 'Imported Original' || created.version.sha256 !== sha || created.version.videoUrl !== 'https://example.invalid/reviewed-video') {
+    throw new Error(`created Version is wrong: ${JSON.stringify(created.version)}`)
+  }
 
-  const level = await db.query(`SELECT song,title,creator,current_version_id FROM levels WHERE id=$1`, [levelId])
-  if (level.rows[0]?.song !== `Reviewed song ${suffix}` || level.rows[0]?.current_version_id !== versionId) throw new Error('created Level/current Version mismatch')
+  const level = await db.query(`SELECT song,title,artist,creator,effecter,current_version_id FROM levels WHERE id=$1`, [levelId])
+  if (level.rows[0]?.song !== `Reviewed song ${suffix}` || level.rows[0]?.title !== `Reviewed song ${suffix}` || level.rows[0]?.artist !== 'Reviewed artist' || level.rows[0]?.current_version_id !== versionId) {
+    throw new Error(`created Level/current Version mismatch: ${JSON.stringify(level.rows[0])}`)
+  }
+  const storedVersion = await db.query(`SELECT video_url FROM level_versions WHERE id=$1`, [versionId])
+  if (storedVersion.rows[0]?.video_url !== 'https://example.invalid/reviewed-video') throw new Error('video URL was not stored on LevelVersion')
   const canonicalCount = Number((await db.query(`SELECT count(*)::int AS count FROM canonical_ratings WHERE level_version_id=$1`, [versionId])).rows[0].count)
   if (canonicalCount !== 0) throw new Error('TUF create-level mutated canonical_ratings')
 
@@ -143,7 +151,7 @@ try {
 
   const duplicate = await request('/admin/imports/tuf/create-level', {
     method: 'POST',
-    body: { observationId: observation.observationId, title: 'duplicate should fail' },
+    body: { observationId: observation.observationId, song: 'duplicate should fail', artist: 'x', creator: 'x', version: { label: 'x' } },
     expectedStatus: 409,
   })
   if (!String(duplicate.payload?.error ?? '').includes('already linked')) throw new Error(`duplicate create guard returned unexpected response: ${JSON.stringify(duplicate.payload)}`)
@@ -156,7 +164,7 @@ try {
   if (!audits.rows.some((row) => row.action === 'TUF_CREATE_LEVEL' && row.details?.canonicalRatingCreated === false)) throw new Error('TUF_CREATE_LEVEL audit missing')
 
   console.log('TUF CREATE LEVEL E2E PASSED')
-  console.log('unlinked TUF -> editable metadata -> Level+Version -> immediate mapping -> historic Level links -> latest Version link -> canonical remains Unrated -> proposal eligible')
+  console.log('unlinked TUF -> song/artist/creator/effecter + Version URLs/SHA -> immediate mapping -> canonical remains Unrated -> proposal eligible')
 } finally {
   if (connected) {
     try {
