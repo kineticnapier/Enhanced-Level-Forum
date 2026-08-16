@@ -6,6 +6,7 @@ import { hashPassword, randomToken, sha256Hex, verifyPassword } from './crypto'
 import { withDb, inTransaction } from './db'
 import { allowedOrigin, clearSessionCookie, sessionCookie } from './http'
 import { decideProposal, ProposalDecisionError } from './proposals/execution'
+import { prepareReferenceProposalPayload, ReferenceProposalError, type ReferenceProposalType } from './proposals/references'
 import {
   audit,
   normalizeConfidence,
@@ -211,7 +212,7 @@ app.get('/api/levels/:id', async (c) => {
          GROUP BY family, anchor_tier ORDER BY family, anchor_tier`, [id],
       ),
       db.query(
-        `SELECT r.id, r.family, r.tier, r.technique, r.position_hint, r.status, r.confidence
+        `SELECT r.id,r.level_version_id,r.family,r.tier,r.technique,r.position_hint,r.status,r.confidence,r.notes
          FROM difficulty_references r JOIN level_versions lv ON lv.id = r.level_version_id
          WHERE lv.level_id = $1 ORDER BY r.family, r.tier, r.technique`, [id],
       ),
@@ -229,7 +230,7 @@ app.get('/api/levels/:id', async (c) => {
       versions: versions.rows.map((row) => ({ id: row.id, label: row.label, sha256: row.sha256, downloadUrl: row.download_url, notes: row.notes, createdAt: row.created_at })),
       ratingHistory: ratings.rows.map((row) => ({ id: row.id, levelVersionId: row.level_version_id, family: row.family, tier: row.tier, confidence: row.confidence === null ? null : Number(row.confidence), reason: row.reason, effectiveFrom: row.effective_from, effectiveTo: row.effective_to })),
       voteSummary: votes.rows.map((row) => ({ family: row.family, anchorTier: row.anchor_tier, count: row.count, medianEvidence: Number(row.median_evidence), meanEvidence: Number(row.mean_evidence) })),
-      references: references.rows.map((row) => ({ id: row.id, family: row.family, tier: row.tier, technique: row.technique, positionHint: row.position_hint, status: row.status, confidence: row.confidence === null ? null : Number(row.confidence) })),
+      references: references.rows.map((row) => ({ id: row.id, levelVersionId: row.level_version_id, family: row.family, tier: row.tier, technique: row.technique, positionHint: row.position_hint, status: row.status, confidence: row.confidence === null ? null : Number(row.confidence), notes: row.notes ?? null })),
     }
   })
   if (!detail) return c.json({ error: 'Level not found' }, 404)
@@ -343,16 +344,25 @@ app.post('/api/proposals', requireRole('VIEWER'), async (c) => {
   if (!allowedTypes.includes(body.type) || !body.levelId || !body.title?.trim() || !body.reason?.trim()) {
     return c.json({ error: 'type, levelId, title and reason are required' }, 400)
   }
-  const proposal = await withDb(c.env, async (db) => {
-    const result = await db.query(
-      `INSERT INTO proposals(type, level_id, title, payload, reason, proposer_id)
-       VALUES ($1,$2,$3,$4::jsonb,$5,$6) RETURNING *`,
-      [body.type, body.levelId, body.title.trim(), JSON.stringify(body.payload ?? {}), body.reason.trim(), user.id],
-    )
-    await audit(db, user.id, 'PROPOSAL_CREATE', 'proposal', result.rows[0].id, { type: body.type })
-    return result.rows[0]
-  })
-  return c.json({ proposal }, 201)
+  try {
+    const proposal = await withDb(c.env, async (db) => {
+      const referenceTypes = new Set<ReferenceProposalType>(['REFERENCE_ADD','REFERENCE_MOVE','REFERENCE_REMOVE'])
+      const payload = referenceTypes.has(body.type as ReferenceProposalType)
+        ? await prepareReferenceProposalPayload(db, { type: body.type as ReferenceProposalType, levelId: body.levelId, payload: body.payload })
+        : body.payload ?? {}
+      const result = await db.query(
+        `INSERT INTO proposals(type, level_id, title, payload, reason, proposer_id)
+         VALUES ($1,$2,$3,$4::jsonb,$5,$6) RETURNING *`,
+        [body.type, body.levelId, body.title.trim(), JSON.stringify(payload), body.reason.trim(), user.id],
+      )
+      await audit(db, user.id, 'PROPOSAL_CREATE', 'proposal', result.rows[0].id, { type: body.type, baselineCaptured: referenceTypes.has(body.type as ReferenceProposalType) })
+      return result.rows[0]
+    })
+    return c.json({ proposal }, 201)
+  } catch (error) {
+    if (error instanceof ReferenceProposalError) return c.json({ error: error.message }, error.status)
+    throw error
+  }
 })
 
 app.post('/api/proposals/:id/votes', requireRole('VIEWER'), async (c) => {

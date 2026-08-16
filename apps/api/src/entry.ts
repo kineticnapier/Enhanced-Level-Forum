@@ -4,11 +4,24 @@ import { withDb } from './db'
 import { createTufRerateProposal, listTufEvidence, TufEvidenceError } from './evidence/tuf'
 import { importTufSnapshot, type TufRawSnapshot } from './importers/tuf'
 import { fetchConsistentTufSnapshot } from './importers/tuf-fetch'
-import { linkTufObservation, listTufUnlinked, TufReconciliationError } from './reconciliation/tuf'
+import { createLevelFromTufObservation, linkTufObservation, listTufUnlinked, TufReconciliationError } from './reconciliation/tuf'
 
 type TufImportBody = { rawData?: TufRawSnapshot; sourceVersion?: string | null }
 type TufLinkBody = { observationId?: string; levelId?: string; levelVersionId?: string | null }
 type TufProposalBody = { observationId?: string; reason?: string | null }
+type TufCreateLevelBody = {
+  observationId?: string
+  song?: string | null
+  title?: string | null
+  creator?: string | null
+  status?: string | null
+  version?: {
+    label?: string | null
+    sha256?: string | null
+    downloadUrl?: string | null
+    notes?: string | null
+  }
+}
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
@@ -67,6 +80,32 @@ app.post('/api/admin/imports/tuf/link', requireRole('REFERENCE_MANAGER'), async 
       actorId: user.id,
     }))
     return c.json(result)
+  } catch (error) {
+    if (error instanceof TufReconciliationError) return c.json({ error: error.message }, error.status)
+    throw error
+  }
+})
+
+app.post('/api/admin/imports/tuf/create-level', requireRole('MODERATOR'), async (c) => {
+  const user = c.get('user')!
+  const body = await c.req.json<TufCreateLevelBody>().catch((): TufCreateLevelBody => ({}))
+  const observationId = body.observationId?.trim() ?? ''
+  if (!UUID_RE.test(observationId)) return c.json({ error: 'observationId must be a UUID' }, 400)
+
+  try {
+    const result = await withDb(c.env, (db) => createLevelFromTufObservation(db, {
+      observationId,
+      song: body.song,
+      title: body.title,
+      creator: body.creator,
+      status: body.status,
+      versionLabel: body.version?.label,
+      sha256: body.version?.sha256,
+      downloadUrl: body.version?.downloadUrl,
+      notes: body.version?.notes,
+      actorId: user.id,
+    }))
+    return c.json(result, 201)
   } catch (error) {
     if (error instanceof TufReconciliationError) return c.json({ error: error.message }, error.status)
     throw error

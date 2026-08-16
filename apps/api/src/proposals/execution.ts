@@ -1,6 +1,7 @@
 import type { Family } from '@elf/shared'
 import type { DbClient } from '../db'
 import { inTransaction } from '../db'
+import { executeReferenceProposalInTransaction, ReferenceProposalError } from './references'
 import { audit, publishCanonicalRatingInTransaction } from '../services'
 
 export class ProposalDecisionError extends Error {
@@ -16,6 +17,7 @@ type Rating = { family: Family; tier: number }
 type DecisionStatus = 'APPROVED' | 'REJECTED' | 'WITHDRAWN'
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+const REFERENCE_PROPOSAL_TYPES = new Set(['REFERENCE_ADD', 'REFERENCE_MOVE', 'REFERENCE_REMOVE'])
 
 function parseRating(value: unknown): Rating | null {
   if (!value || typeof value !== 'object') return null
@@ -64,6 +66,75 @@ async function finishDecision(
   return result.rows[0]
 }
 
+async function executeRerateProposal(db: DbClient, proposal: any, actorId: string) {
+  const payload = proposal.payload && typeof proposal.payload === 'object'
+    ? proposal.payload as Record<string, unknown>
+    : {}
+  const targetLevelVersionId = typeof payload.targetLevelVersionId === 'string'
+    ? payload.targetLevelVersionId
+    : ''
+  const proposedRating = parseRating(payload.proposedRating)
+  const baselinePresent = Object.prototype.hasOwnProperty.call(payload, 'currentCanonicalRating')
+  const baselineRating = payload.currentCanonicalRating === null ? null : parseRating(payload.currentCanonicalRating)
+
+  if (!UUID_RE.test(targetLevelVersionId) || !proposedRating || !baselinePresent || (payload.currentCanonicalRating !== null && !baselineRating)) {
+    throw new ProposalDecisionError(
+      409,
+      'RERATE proposal payload cannot be executed safely; target version, baseline rating, and proposed rating are required',
+    )
+  }
+  if (sameRating(baselineRating, proposedRating)) {
+    throw new ProposalDecisionError(409, 'RERATE proposal is a no-op and cannot be executed')
+  }
+
+  const versionResult = await db.query(
+    `SELECT lv.id,lv.level_id,lv.label
+     FROM level_versions lv
+     WHERE lv.id=$1 AND lv.level_id=$2
+     FOR UPDATE`,
+    [targetLevelVersionId, proposal.level_id],
+  )
+  if (!versionResult.rowCount) {
+    throw new ProposalDecisionError(409, 'Proposal target LevelVersion no longer belongs to this Level')
+  }
+
+  const currentResult = await db.query(
+    `SELECT id,family,tier
+     FROM canonical_ratings
+     WHERE level_version_id=$1 AND effective_to IS NULL
+     FOR UPDATE`,
+    [targetLevelVersionId],
+  )
+  const currentRating: Rating | null = currentResult.rowCount
+    ? { family: currentResult.rows[0].family as Family, tier: Number(currentResult.rows[0].tier) }
+    : null
+
+  if (!sameRating(currentRating, baselineRating)) {
+    throw new ProposalDecisionError(
+      409,
+      `Proposal baseline is stale: expected ${ratingText(baselineRating)}, current canonical is ${ratingText(currentRating)}`,
+    )
+  }
+
+  const rerate = await publishCanonicalRatingInTransaction(db, {
+    levelVersionId: targetLevelVersionId,
+    expectedLevelId: proposal.level_id,
+    family: proposedRating.family,
+    tier: proposedRating.tier,
+    confidence: null,
+    reason: proposal.reason,
+    actorId,
+  })
+
+  return {
+    type: 'RERATE' as const,
+    targetLevelVersionId,
+    previousRating: baselineRating,
+    rating: rerate.rating,
+    staleReferenceIds: rerate.staleReferenceIds,
+  }
+}
+
 export async function decideProposal(
   db: DbClient,
   input: {
@@ -81,7 +152,7 @@ export async function decideProposal(
     if (!proposalResult.rowCount) throw new ProposalDecisionError(404, 'Open proposal not found')
     const proposal = proposalResult.rows[0]
 
-    if (input.status !== 'APPROVED' || proposal.type !== 'RERATE') {
+    if (input.status !== 'APPROVED') {
       const decided = await finishDecision(db, {
         ...input,
         auditDetails: { execution: 'STATUS_ONLY', proposalType: proposal.type },
@@ -89,95 +160,35 @@ export async function decideProposal(
       return { proposal: decided, execution: null }
     }
 
-    const payload = proposal.payload && typeof proposal.payload === 'object'
-      ? proposal.payload as Record<string, unknown>
-      : {}
-    const targetLevelVersionId = typeof payload.targetLevelVersionId === 'string'
-      ? payload.targetLevelVersionId
-      : ''
-    const proposedRating = parseRating(payload.proposedRating)
-    const baselinePresent = Object.prototype.hasOwnProperty.call(payload, 'currentCanonicalRating')
-    const baselineRating = payload.currentCanonicalRating === null ? null : parseRating(payload.currentCanonicalRating)
-
-    if (!UUID_RE.test(targetLevelVersionId) || !proposedRating || !baselinePresent || (payload.currentCanonicalRating !== null && !baselineRating)) {
-      throw new ProposalDecisionError(
-        409,
-        'RERATE proposal payload cannot be executed safely; target version, baseline rating, and proposed rating are required',
-      )
+    let execution: any = null
+    if (proposal.type === 'RERATE') {
+      execution = await executeRerateProposal(db, proposal, input.actorId)
+    } else if (REFERENCE_PROPOSAL_TYPES.has(proposal.type)) {
+      try {
+        execution = await executeReferenceProposalInTransaction(db, { proposal, actorId: input.actorId })
+      } catch (error) {
+        if (error instanceof ReferenceProposalError) throw new ProposalDecisionError(error.status, error.message)
+        throw error
+      }
+    } else {
+      const decided = await finishDecision(db, {
+        ...input,
+        auditDetails: { execution: 'STATUS_ONLY', proposalType: proposal.type },
+      })
+      return { proposal: decided, execution: null }
     }
-    if (sameRating(baselineRating, proposedRating)) {
-      throw new ProposalDecisionError(409, 'RERATE proposal is a no-op and cannot be executed')
-    }
-
-    const versionResult = await db.query(
-      `SELECT lv.id,lv.level_id,lv.label
-       FROM level_versions lv
-       WHERE lv.id=$1 AND lv.level_id=$2
-       FOR UPDATE`,
-      [targetLevelVersionId, proposal.level_id],
-    )
-    if (!versionResult.rowCount) {
-      throw new ProposalDecisionError(409, 'Proposal target LevelVersion no longer belongs to this Level')
-    }
-
-    const currentResult = await db.query(
-      `SELECT id,family,tier
-       FROM canonical_ratings
-       WHERE level_version_id=$1 AND effective_to IS NULL
-       FOR UPDATE`,
-      [targetLevelVersionId],
-    )
-    const currentRating: Rating | null = currentResult.rowCount
-      ? { family: currentResult.rows[0].family as Family, tier: Number(currentResult.rows[0].tier) }
-      : null
-
-    if (!sameRating(currentRating, baselineRating)) {
-      throw new ProposalDecisionError(
-        409,
-        `Proposal baseline is stale: expected ${ratingText(baselineRating)}, current canonical is ${ratingText(currentRating)}`,
-      )
-    }
-
-    const rerate = await publishCanonicalRatingInTransaction(db, {
-      levelVersionId: targetLevelVersionId,
-      expectedLevelId: proposal.level_id,
-      family: proposedRating.family,
-      tier: proposedRating.tier,
-      confidence: null,
-      reason: proposal.reason,
-      actorId: input.actorId,
-    })
 
     const decided = await finishDecision(db, {
       ...input,
       auditDetails: {
-        execution: 'RERATE_APPLIED',
-        targetLevelVersionId,
-        baselineRating,
-        proposedRating,
-        canonicalRatingId: rerate.rating.id,
-        staleReferenceIds: rerate.staleReferenceIds,
+        execution: `${proposal.type}_APPLIED`,
+        proposalType: proposal.type,
+        result: execution,
       },
     })
 
-    await audit(db, input.actorId, 'PROPOSAL_EXECUTION', 'proposal', input.proposalId, {
-      type: 'RERATE',
-      targetLevelVersionId,
-      baselineRating,
-      proposedRating,
-      canonicalRatingId: rerate.rating.id,
-      staleReferenceIds: rerate.staleReferenceIds,
-    })
+    await audit(db, input.actorId, 'PROPOSAL_EXECUTION', 'proposal', input.proposalId, execution)
 
-    return {
-      proposal: decided,
-      execution: {
-        type: 'RERATE' as const,
-        targetLevelVersionId,
-        previousRating: baselineRating,
-        rating: rerate.rating,
-        staleReferenceIds: rerate.staleReferenceIds,
-      },
-    }
+    return { proposal: decided, execution }
   })
 }

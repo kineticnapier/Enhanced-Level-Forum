@@ -191,8 +191,16 @@ try {
     body: { observationId: observation.observationId, levelId: otherLevelId },
     expectedStatus: 409,
   })
-  if (!String(conflict.payload?.error ?? '').includes('already mapped')) {
+  const conflictMessage = String(conflict.payload?.error ?? '')
+  if (!conflictMessage.includes('already linked') && !conflictMessage.includes('already mapped')) {
     throw new Error(`unexpected conflict response: ${JSON.stringify(conflict.payload)}`)
+  }
+  const mappingAfterConflict = await db.query(
+    `SELECT level_id FROM external_level_ids WHERE source='TUF' AND external_id=$1`,
+    [tufExternalId],
+  )
+  if (mappingAfterConflict.rows[0]?.level_id !== levelId) {
+    throw new Error('conflicting reconciliation changed the existing TUF ID mapping')
   }
 
   const canonicalAfter = Number((await db.query(

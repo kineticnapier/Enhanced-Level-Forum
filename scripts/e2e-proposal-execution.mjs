@@ -155,8 +155,13 @@ try {
      ORDER BY created_at`,
     [userId, proposal.id],
   )
-  if (!executionAudit.rows.some((row) => row.action === 'PROPOSAL_EXECUTION' && row.details?.proposedRating?.tier === 10)) {
+  const executionRow = executionAudit.rows.find((row) => row.action === 'PROPOSAL_EXECUTION')
+  if (executionRow?.details?.type !== 'RERATE' || executionRow?.details?.rating?.family !== 'G' || Number(executionRow?.details?.rating?.tier) !== 10) {
     throw new Error(`PROPOSAL_EXECUTION audit missing: ${JSON.stringify(executionAudit.rows)}`)
+  }
+  const decisionRow = executionAudit.rows.find((row) => row.action === 'PROPOSAL_DECISION')
+  if (decisionRow?.details?.execution !== 'RERATE_APPLIED' || Number(decisionRow?.details?.result?.rating?.tier) !== 10) {
+    throw new Error(`PROPOSAL_DECISION execution result missing: ${JSON.stringify(executionAudit.rows)}`)
   }
 
   const staleProposal = (await request('/proposals', {
