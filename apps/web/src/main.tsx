@@ -15,11 +15,12 @@ import type {
 } from '@elf/shared'
 import { api } from './api'
 import { I18nProvider, LanguageSwitch, useI18n } from './i18n'
+import { RatingQueuePage } from './RatingQueue'
 import './styles.css'
 import './public-level-detail.css'
 
 type Route = {
-  page: 'home' | 'levels' | 'level' | 'references' | 'proposals' | 'proposal' | 'login'
+  page: 'home' | 'levels' | 'level' | 'rating-queue' | 'references' | 'proposals' | 'proposal' | 'login'
   id?: string
 }
 
@@ -35,6 +36,7 @@ function parseRoute(): Route {
   const parts = raw.split('/').filter(Boolean)
   if (parts[0] === 'levels' && parts[1]) return { page: 'level', id: parts[1] }
   if (parts[0] === 'levels') return { page: 'levels' }
+  if (parts[0] === 'rating-queue') return { page: 'rating-queue' }
   if (parts[0] === 'references') return { page: 'references' }
   if (parts[0] === 'proposals' && parts[1]) return { page: 'proposal', id: parts[1] }
   if (parts[0] === 'proposals') return { page: 'proposals' }
@@ -122,12 +124,14 @@ function App() {
     .finally(() => setAuthLoaded(true))
 
   useEffect(() => { void refreshUser() }, [])
+  const canRate = !!user && ['RATER','REFERENCE_MANAGER','MODERATOR','ADMIN'].includes(user.role)
 
   return <div className="shell">
     <header className="topbar">
       <a className="brand" href="#/">ELF <span>Enhanced Level Forum</span></a>
       <nav>
         <a href="#/levels">{t('nav.levels')}</a>
+        {canRate && <a href="#/rating-queue">Rating Queue</a>}
         <a href="#/references">{t('nav.references')}</a>
         <a href="#/proposals">{t('nav.proposals')}</a>
       </nav>
@@ -143,6 +147,7 @@ function App() {
       {route.page === 'home' && <Home />}
       {route.page === 'levels' && <Levels />}
       {route.page === 'level' && route.id && <Level id={route.id} user={user} />}
+      {route.page === 'rating-queue' && <RatingQueuePage user={user} />}
       {route.page === 'references' && <References />}
       {route.page === 'proposals' && <Proposals user={user} />}
       {route.page === 'proposal' && route.id && <Proposal id={route.id} user={user} />}
