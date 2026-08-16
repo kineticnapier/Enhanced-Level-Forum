@@ -220,9 +220,9 @@ async function finalizeCrawl(
   }
 }
 
-export async function runScheduledTufStep(
+async function runScheduledTufStepCore(
   env: Env,
-  metadata: Record<string, unknown> = {},
+  metadata: Record<string, unknown>,
 ): Promise<TufScheduledStepResult> {
   return withDb(env, async (db) => {
     const lock = await db.query(`SELECT pg_try_advisory_lock(hashtext($1)) AS locked`, [ADVISORY_LOCK])
@@ -290,4 +290,62 @@ export async function runScheduledTufStep(
       await db.query(`SELECT pg_advisory_unlock(hashtext($1))`, [ADVISORY_LOCK]).catch(() => undefined)
     }
   })
+}
+
+function scheduledAt(metadata: Record<string, unknown>): string {
+  const value = metadata.scheduledAt
+  return typeof value === 'string' && Number.isFinite(Date.parse(value))
+    ? value
+    : new Date().toISOString()
+}
+
+async function persistCronStatus(
+  env: Env,
+  metadata: Record<string, unknown>,
+  result: TufScheduledStepResult | null,
+  failureReason: string | null = null,
+) {
+  const status = result?.status ?? 'FAILED'
+  const reason = failureReason ?? (result && 'reason' in result ? result.reason : null)
+  const pagesFetched = result?.status === 'PROGRESS' ? result.pagesFetched : null
+  const snapshotId = result?.status === 'IMPORTED' ? result.snapshotId : null
+
+  await withDb(env, async (db) => {
+    await db.query(
+      `INSERT INTO tuf_crawl_state(
+         source,last_run_at,last_status,last_reason,last_pages_fetched,last_snapshot_id,consecutive_deferred
+       )
+       VALUES ($1,$2::timestamptz,$3,$4,$5,$6,CASE WHEN $3='DEFERRED' THEN 1 ELSE 0 END)
+       ON CONFLICT(source) DO UPDATE SET
+         last_run_at=excluded.last_run_at,
+         last_status=excluded.last_status,
+         last_reason=excluded.last_reason,
+         last_pages_fetched=excluded.last_pages_fetched,
+         last_snapshot_id=coalesce(excluded.last_snapshot_id,tuf_crawl_state.last_snapshot_id),
+         consecutive_deferred=CASE
+           WHEN excluded.last_status='DEFERRED' THEN tuf_crawl_state.consecutive_deferred+1
+           ELSE 0
+         END`,
+      [SOURCE, scheduledAt(metadata), status, reason, pagesFetched, snapshotId],
+    )
+  })
+}
+
+export async function runScheduledTufStep(
+  env: Env,
+  metadata: Record<string, unknown> = {},
+): Promise<TufScheduledStepResult> {
+  try {
+    const result = await runScheduledTufStepCore(env, metadata)
+    await persistCronStatus(env, metadata, result).catch((error) => {
+      console.error('[TUF cron] failed to persist cron status', error)
+    })
+    return result
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error)
+    await persistCronStatus(env, metadata, null, reason).catch((statusError) => {
+      console.error('[TUF cron] failed to persist failed cron status', statusError)
+    })
+    throw error
+  }
 }
