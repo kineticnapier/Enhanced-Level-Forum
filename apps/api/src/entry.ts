@@ -1,9 +1,11 @@
-import app from './index'
-import { requireRole } from './auth'
+import { Hono } from 'hono'
+import coreApp from './index'
+import { requireRole, type AppBindings } from './auth'
 import { withDb } from './db'
 import { createTufRerateProposal, listTufEvidence, TufEvidenceError } from './evidence/tuf'
 import { importTufSnapshot, type TufRawSnapshot } from './importers/tuf'
 import { fetchConsistentTufSnapshot } from './importers/tuf-fetch'
+import { registerProductionAuth } from './production-auth'
 import { registerPublicRoutes } from './public'
 import { createLevelFromTufObservation, linkTufObservation, listTufUnlinked, TufReconciliationError } from './reconciliation/tuf'
 
@@ -26,7 +28,18 @@ type TufCreateLevelBody = {
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
+// Production security/auth routes are deliberately registered first. The core
+// application is then mounted for compatibility with the established v0.3 API.
+// Exact hardened auth/admin-user routes therefore win over their legacy copies.
+const app = new Hono<AppBindings>()
+registerProductionAuth(app)
+app.route('/', coreApp)
 registerPublicRoutes(app)
+
+app.onError((error, c) => {
+  console.error(error)
+  return c.json({ error: 'Internal server error' }, 500)
+})
 
 app.post('/api/admin/imports/tuf', requireRole('REFERENCE_MANAGER'), async (c) => {
   const user = c.get('user')!
