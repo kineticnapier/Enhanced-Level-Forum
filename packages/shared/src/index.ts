@@ -13,6 +13,12 @@ export type ProposalStatus = (typeof PROPOSAL_STATUSES)[number]
 export const PROPOSAL_TYPES = ['RERATE', 'REFERENCE_ADD', 'REFERENCE_MOVE', 'REFERENCE_REMOVE', 'METADATA', 'OTHER'] as const
 export type ProposalType = (typeof PROPOSAL_TYPES)[number]
 
+export const PROPOSAL_VOTES = ['AGREE', 'DISAGREE', 'ABSTAIN'] as const
+export type ProposalVoteValue = (typeof PROPOSAL_VOTES)[number]
+
+export const PROPOSAL_EXECUTION_STATES = ['READY', 'STALE', 'INCOMPLETE', 'STATUS_ONLY', 'CLOSED'] as const
+export type ProposalExecutionState = (typeof PROPOSAL_EXECUTION_STATES)[number]
+
 export const RATING_LEANS = [-2, -1, 0, 1, 2] as const
 export type RatingLean = (typeof RATING_LEANS)[number]
 
@@ -59,6 +65,20 @@ export interface LevelListItem {
   currentVersionId: string | null
   currentRating: { family: Family; tier: number; confidence: number | null } | null
   voteCount: number
+  referenceCount: number
+}
+
+export interface RatingVoteDetail {
+  userId: string
+  displayName: string
+  levelVersionId: string
+  versionLabel: string
+  family: Family
+  anchorTier: number
+  lean: RatingLean
+  confidence: number
+  comment: string | null
+  updatedAt: string
 }
 
 export interface LevelDetail extends LevelListItem {
@@ -69,10 +89,12 @@ export interface LevelDetail extends LevelListItem {
     downloadUrl: string | null
     notes: string | null
     createdAt: string
+    currentRating: { family: Family; tier: number; confidence: number | null } | null
   }>
   ratingHistory: Array<{
     id: string
     levelVersionId: string
+    versionLabel: string
     family: Family
     tier: number
     confidence: number | null
@@ -87,9 +109,11 @@ export interface LevelDetail extends LevelListItem {
     medianEvidence: number
     meanEvidence: number
   }>
+  ratingVotes: RatingVoteDetail[]
   references: Array<{
     id: string
     levelVersionId: string
+    versionLabel: string
     family: Family
     tier: number
     technique: string
@@ -105,6 +129,9 @@ export interface ReferenceRow {
   levelId: string
   levelVersionId: string
   levelTitle: string
+  song: string
+  creator: string
+  versionLabel: string
   family: Family
   tier: number
   technique: string
@@ -123,10 +150,34 @@ export interface ProposalRow {
   payload: Record<string, unknown>
   reason: string
   status: ProposalStatus
+  proposerId: string
   proposerName: string
   createdAt: string
+  decidedAt: string | null
+  decidedByName: string | null
   agree: number
   disagree: number
   abstain: number
+  myVote: ProposalVoteValue | null
   decisionReason: string | null
+  executionState: ProposalExecutionState
+  executionMessage: string
+}
+
+export interface ProposalDetail {
+  proposal: ProposalRow
+  votes: Array<{
+    userId: string
+    displayName: string
+    vote: ProposalVoteValue
+    updatedAt: string
+  }>
+  comments: Array<{
+    id: string
+    userId: string
+    displayName: string
+    body: string
+    createdAt: string
+    updatedAt: string
+  }>
 }
