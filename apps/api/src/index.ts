@@ -5,6 +5,7 @@ import { hasRole, loadUser, requireRole } from './auth'
 import { hashPassword, randomToken, sha256Hex, verifyPassword } from './crypto'
 import { withDb, inTransaction } from './db'
 import { allowedOrigin, clearSessionCookie, sessionCookie } from './http'
+import { decideProposal, ProposalDecisionError } from './proposals/execution'
 import {
   audit,
   normalizeConfidence,
@@ -513,17 +514,19 @@ app.patch('/api/admin/proposals/:id/decision', requireRole('MODERATOR'), async (
   const user = c.get('user')!
   const body = await c.req.json<any>().catch(() => ({}))
   if (!['APPROVED','REJECTED','WITHDRAWN'].includes(body.status)) return c.json({ error: 'Invalid decision status' }, 400)
-  const proposal = await withDb(c.env, async (db) => {
-    const result = await db.query(
-      `UPDATE proposals SET status=$2, decision_reason=$3, decided_by=$4, decided_at=now(), updated_at=now()
-       WHERE id=$1 AND status='OPEN' RETURNING *`,
-      [c.req.param('id'), body.status, body.reason ?? null, user.id],
-    )
-    if (result.rowCount) await audit(db, user.id, 'PROPOSAL_DECISION', 'proposal', c.req.param('id'), { status: body.status, reason: body.reason })
-    return result.rows[0] ?? null
-  })
-  if (!proposal) return c.json({ error: 'Open proposal not found' }, 404)
-  return c.json({ proposal })
+  const status = body.status as 'APPROVED' | 'REJECTED' | 'WITHDRAWN'
+  try {
+    const result = await withDb(c.env, (db) => decideProposal(db, {
+      proposalId: c.req.param('id'),
+      status,
+      reason: body.reason ?? null,
+      actorId: user.id,
+    }))
+    return c.json(result)
+  } catch (error) {
+    if (error instanceof ProposalDecisionError) return c.json({ error: error.message }, error.status)
+    throw error
+  }
 })
 
 app.get('/api/admin/users', requireRole('ADMIN'), async (c) => {
