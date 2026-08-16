@@ -1,5 +1,7 @@
 # Build fix 0.2.3
 
+[日本語](../BUILD_FIX_0.2.2.md) | **English**
+
 TypeScript did not know Vite's `import.meta.env` shape in the public frontend.
 
 Added `src/env.d.ts` to both `apps/web` and `apps/admin`:
