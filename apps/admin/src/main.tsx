@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import type { LevelDetail, LevelListItem, ProposalRow, ReferenceRow, SessionUser, UserRole } from '@elf/shared'
 import { api } from './api'
 import { I18nProvider, LanguageSwitch, useI18n } from './i18n'
+import { LevelManagement } from './LevelManagement'
 import { TufReconciliation } from './TufReconciliation'
 import './styles.css'
 
@@ -30,7 +31,7 @@ function App() {
       {staffTabs.map((x)=><button key={x} className={tab===x?'active':''} onClick={()=>setTab(x)}>{t(`tab.${x}`)}</button>)}
       <button className="logout" onClick={async()=>{await api('/auth/logout',{method:'POST'});setUser(null)}}>{t('auth.logout')}</button>
     </aside>
-    <main>{tab==='overview'&&<Overview/>}{tab==='levels'&&<Levels/>}{tab==='references'&&<References/>}{tab==='proposals'&&<Proposals/>}{tab==='users'&&<Users user={user}/>} {tab==='imports'&&<Imports user={user}/>} {tab==='audit'&&<Audit/>}</main>
+    <main>{tab==='overview'&&<Overview/>}{tab==='levels'&&<LevelManagement/>}{tab==='references'&&<References/>}{tab==='proposals'&&<Proposals/>}{tab==='users'&&<Users user={user}/>} {tab==='imports'&&<Imports user={user}/>} {tab==='audit'&&<Audit/>}</main>
   </div>
 }
 
