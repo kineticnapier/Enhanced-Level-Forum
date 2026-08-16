@@ -27,7 +27,7 @@ type QueueResponse = {
 
 const PAGE_SIZE = 50
 
-export function TufReconciliation() {
+export function TufReconciliation({canCreateLevel=false}:{canCreateLevel?:boolean}) {
   const [queue,setQueue]=useState<QueueResponse|null>(null)
   const [search,setSearch]=useState('')
   const [offset,setOffset]=useState(0)
@@ -37,18 +37,27 @@ export function TufReconciliation() {
   const [levelId,setLevelId]=useState('')
   const [detail,setDetail]=useState<LevelDetail|null>(null)
   const [versionId,setVersionId]=useState('')
+  const [createSong,setCreateSong]=useState('')
+  const [createTitle,setCreateTitle]=useState('')
+  const [createCreator,setCreateCreator]=useState('')
+  const [createVersionLabel,setCreateVersionLabel]=useState('Original')
+  const [createSha,setCreateSha]=useState('')
+  const [createUrl,setCreateUrl]=useState('')
   const [busy,setBusy]=useState(false)
   const [message,setMessage]=useState('')
   const [error,setError]=useState('')
+
+  const clearSelection=()=>{
+    setSelected(null);setLevelId('');setDetail(null);setVersionId('');setLevels([])
+    setCreateSong('');setCreateTitle('');setCreateCreator('');setCreateVersionLabel('Original');setCreateSha('');setCreateUrl('')
+  }
 
   const loadQueue=async(nextOffset=offset,nextSearch=search)=>{
     setError('')
     const result=await api<QueueResponse>(`/admin/imports/tuf/unlinked?limit=${PAGE_SIZE}&offset=${nextOffset}&search=${encodeURIComponent(nextSearch)}`)
     setQueue(result)
     setOffset(nextOffset)
-    if(selected&&!result.rows.some((row)=>row.observationId===selected.observationId)){
-      setSelected(null);setLevelId('');setDetail(null);setVersionId('')
-    }
+    if(selected&&!result.rows.some((row)=>row.observationId===selected.observationId))clearSelection()
   }
 
   useEffect(()=>{void loadQueue(0,'')},[])
@@ -58,6 +67,12 @@ export function TufReconciliation() {
     const initial=(row.title||row.song||'').trim()
     setCandidateSearch(initial)
     setLevels([]);setLevelId('');setDetail(null);setVersionId('');setMessage('');setError('')
+    setCreateSong((row.song||row.title||`TUF #${row.externalId}`).trim())
+    setCreateTitle((row.title||row.song||`TUF #${row.externalId}`).trim())
+    setCreateCreator((row.creator||'Unknown').trim())
+    setCreateVersionLabel('Original')
+    setCreateSha(row.sha256??'')
+    setCreateUrl(row.downloadUrl??'')
     if(initial)void searchLevels(initial)
   }
 
@@ -84,16 +99,37 @@ export function TufReconciliation() {
         body:JSON.stringify({observationId:selected.observationId,levelId,levelVersionId:versionId||null}),
       })
       setMessage(`Linked TUF #${selected.externalId} → ${result.level.title}${result.version?` / ${result.version.label}`:''}`)
-      setSelected(null);setLevelId('');setDetail(null);setVersionId('')
+      clearSelection()
       await loadQueue(offset,search)
     }catch(e){setError(e instanceof Error?e.message:'Link failed')}
+    finally{setBusy(false)}
+  }
+
+  const createLevel=async()=>{
+    if(!selected||!canCreateLevel)return
+    setBusy(true);setError('');setMessage('')
+    try{
+      const result=await api<{level:{id:string;title:string};version:{label:string};canonicalRating:null}>('/admin/imports/tuf/create-level',{
+        method:'POST',
+        body:JSON.stringify({
+          observationId:selected.observationId,
+          song:createSong,
+          title:createTitle,
+          creator:createCreator,
+          version:{label:createVersionLabel,sha256:createSha||null,downloadUrl:createUrl||null},
+        }),
+      })
+      setMessage(`Created & linked TUF #${selected.externalId} → ${result.level.title} / ${result.version.label}. ELF canonical remains Unrated.`)
+      clearSelection()
+      await loadQueue(offset,search)
+    }catch(e){setError(e instanceof Error?e.message:'Create Level failed')}
     finally{setBusy(false)}
   }
 
   return <>
     <div className="panel">
       <div className="title-row"><div><p className="eyebrow">TUF → ELF</p><h2>Reconciliation queue</h2></div><strong>{queue?`${queue.total} unlinked`:'Loading…'}</strong></div>
-      <p className="muted">最新TUF snapshotの未リンク譜面だけを表示します。ここで作るのはexternal ID mappingで、canonical ratingやELF Referenceは変更しません。</p>
+      <p className="muted">最新TUF snapshotの未リンク譜面だけを表示します。既存Levelへのlinkも新規Level作成も、TUF ratingをcanonicalへ直接コピーしません。</p>
       {queue?.snapshot&&<p className="muted">Snapshot: <code>{queue.snapshot.id}</code> · {new Date(queue.snapshot.importedAt).toLocaleString()}</p>}
       <div className="grid"><input placeholder="TUF ID / title / song / creator" value={search} onChange={(e)=>setSearch(e.target.value)} onKeyDown={(e)=>{if(e.key==='Enter')void loadQueue(0,search)}}/><button onClick={()=>void loadQueue(0,search)}>Search</button></div>
       {message&&<p className="notice">{message}</p>}{error&&<p className="error">{error}</p>}
@@ -115,7 +151,17 @@ export function TufReconciliation() {
           <select value={levelId} onChange={(e)=>void chooseLevel(e.target.value)}><option value="">Select ELF Level</option>{levels.map((level)=><option key={level.id} value={level.id}>{level.currentRating?`${level.currentRating.family}${level.currentRating.tier} · `:''}{level.title} · {level.creator}</option>)}</select>
           {detail&&<><h3>Version link (optional)</h3><select value={versionId} onChange={(e)=>setVersionId(e.target.value)}><option value="">Level only</option>{detail.versions.map((version)=><option key={version.id} value={version.id}>{version.label}{version.id===detail.currentVersionId?' (current)':''} · {version.sha256??'no SHA'}</option>)}</select><p className="muted">Level-only mapping is persistent for future imports. A Version is attached explicitly only to this snapshot; future imports still require an exact SHA match for automatic Version linkage.</p></>}
           {shaConflict&&<p className="error">Selected Version has a different SHA-256. The API will reject this link.</p>}
-          <button disabled={!levelId||busy||shaConflict} onClick={()=>void link()}>{busy?'Linking…':'Link TUF ID to ELF'}</button>
+          <button disabled={!levelId||busy||shaConflict} onClick={()=>void link()}>{busy?'Working…':'Link TUF ID to ELF'}</button>
+          <h3>Create new ELF Level</h3>
+          {canCreateLevel?<>
+            <p className="muted">Imported metadata is only a starting point. Edit it before creation if needed. The new Level is immediately reconciled to this TUF ID, but stays canonically Unrated.</p>
+            <input placeholder="Song / composer" value={createSong} onChange={(e)=>setCreateSong(e.target.value)}/>
+            <input placeholder="Level title" value={createTitle} onChange={(e)=>setCreateTitle(e.target.value)}/>
+            <input placeholder="Creator" value={createCreator} onChange={(e)=>setCreateCreator(e.target.value)}/>
+            <div className="grid"><input placeholder="Version label" value={createVersionLabel} onChange={(e)=>setCreateVersionLabel(e.target.value)}/><input placeholder="SHA-256 (optional)" value={createSha} onChange={(e)=>setCreateSha(e.target.value)}/></div>
+            <input placeholder="Download URL (optional)" value={createUrl} onChange={(e)=>setCreateUrl(e.target.value)}/>
+            <button disabled={busy||!createSong.trim()||!createTitle.trim()||!createCreator.trim()||!createVersionLabel.trim()} onClick={()=>void createLevel()}>{busy?'Working…':'Create ELF Level & link'}</button>
+          </>:<p className="muted">Creating a new canonical ELF Level requires MODERATOR or ADMIN. REFERENCE_MANAGER can still link this TUF ID to an existing Level.</p>}
         </div>:<p className="muted">Select an unlinked TUF row.</p>}</div>
       </div>}
     </div>
