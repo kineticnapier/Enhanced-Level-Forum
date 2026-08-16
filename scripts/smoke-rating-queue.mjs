@@ -20,14 +20,18 @@ for (const invariant of [
   "reason: 'DISAGREEMENT'",
   "reason: 'DISAGREEMENT_NEEDS_ONE_MORE'",
   "app.get('/api/rating-queue'",
+  "app.get('/api/rating-queue/:id'",
   "app.post('/api/rating-queue/:id/claim'",
   "app.delete('/api/rating-queue/:id/claim'",
+  "app.post('/api/rating-queue/:id/rating'",
   "app.post('/api/admin/rating-queue'",
   "app.get('/api/admin/rating-queue'",
   "app.post('/api/levels/:id/votes'",
-  "ON CONFLICT(level_version_id,user_id)",
+  "source: 'RATING_TASK'",
+  "source: 'LEVEL_COMPAT'",
   "status='SUBMITTED'",
-  'Claim this rating queue item before submitting a rating',
+  'Claim this rating task before submitting a rating',
+  'lv.download_url,lv.video_url',
 ]) {
   if (!queue.includes(invariant)) throw new Error(`rating queue API missing: ${invariant}`)
 }
@@ -38,7 +42,7 @@ for (const forbidden of ['external_rating_observations', 'TUF_SCHEDULED_IMPORT',
 const entry = await readFile(new URL('../apps/api/src/entry.ts', import.meta.url), 'utf8')
 if (!entry.includes('registerRatingQueueRoutes(app)')) throw new Error('rating queue routes are not registered')
 if (entry.indexOf('registerRatingQueueRoutes(app)') > entry.indexOf("app.route('/', coreApp)")) {
-  throw new Error('queue-aware vote route must be registered before legacy core voting')
+  throw new Error('queue-aware compatibility route must be registered before legacy core voting')
 }
 
 const services = await readFile(new URL('../apps/api/src/services.ts', import.meta.url), 'utf8')
@@ -47,7 +51,7 @@ for (const invariant of ['rating_queue_items', "status='CLOSED'", 'closedRatingQ
 }
 
 const shared = await readFile(new URL('../packages/shared/src/index.ts', import.meta.url), 'utf8')
-for (const invariant of ['RatingQueueItem', 'RatingQueueStatus', 'RatingQueueClaimStatus', 'RatingQueueReviewReason']) {
+for (const invariant of ['RatingQueueItem', 'RatingQueueStatus', 'RatingQueueClaimStatus', 'RatingQueueReviewReason', 'downloadUrl: string | null', 'videoUrl: string | null']) {
   if (!shared.includes(invariant)) throw new Error(`shared queue type missing: ${invariant}`)
 }
 
@@ -61,9 +65,22 @@ const queueUi = await readFile(new URL('../apps/web/src/RatingQueue.tsx', import
 for (const invariant of ["page: 'rating-queue'", '#/rating-queue', 'RatingQueuePage']) {
   if (!web.includes(invariant)) throw new Error(`public queue route missing: ${invariant}`)
 }
-for (const invariant of ['/rating-queue', 'これを査定する', '自分の担当', 'Review Ready', '外部Rating']) {
+for (const forbidden of ['function VoteBox(', '/levels/${level.id}/votes']) {
+  if (web.includes(forbidden)) throw new Error(`level display must not own rating input: ${forbidden}`)
+}
+for (const invariant of [
+  '/rating-queue',
+  'これを査定する',
+  '自分の担当',
+  'Review Ready',
+  '外部Rating',
+  'RatingTaskPage',
+  '#/rating-queue/${item.id}',
+  '/rating-queue/${item.id}/rating',
+  '譜面表示を開く',
+]) {
   if (!queueUi.includes(invariant)) throw new Error(`rater queue UI missing: ${invariant}`)
 }
 
 console.log('RATING QUEUE STATIC SMOKE PASSED')
-console.log('explicit max-30 queue -> max-5 claims/rater -> 2-vote consensus or 3-vote disagreement -> Review Ready -> staff canonical closes round')
+console.log('level display is read-only for rating input -> dedicated claimed rating task -> review-ready evidence -> staff confirms difficulty')
