@@ -14,7 +14,7 @@ if (!/^\d+$/.test(port) || Number(port) < 1 || Number(port) > 65535) {
 
 const child = spawn(
   npmCommand,
-  ['-w', '@elf/api', 'run', 'dev', '--', '--port', port],
+  ['-w', '@elf/api', 'run', 'dev', '--', '--port', port, '--test-scheduled'],
   {
     cwd: ROOT_DIR,
     env: {
