@@ -16,16 +16,22 @@ export function parseCookies(header: string | undefined): Record<string, string>
   )
 }
 
+export function sessionCookieName(env: Env): string {
+  return env.ENVIRONMENT === 'production' ? '__Host-elf_session' : 'elf_session'
+}
+
 export function sessionCookie(env: Env, token: string, maxAgeSeconds: number): string {
   const parts = [
-    `elf_session=${encodeURIComponent(token)}`,
+    `${sessionCookieName(env)}=${encodeURIComponent(token)}`,
     'Path=/',
     'HttpOnly',
     'SameSite=Lax',
     `Max-Age=${maxAgeSeconds}`,
   ]
-  if (env.ENVIRONMENT !== 'development') parts.push('Secure')
-  if (env.COOKIE_DOMAIN) parts.push(`Domain=${env.COOKIE_DOMAIN}`)
+  // __Host- cookies deliberately have no Domain attribute. This keeps the
+  // session credential scoped to the API host instead of exposing it to sibling
+  // public/admin subdomains.
+  if (env.ENVIRONMENT === 'production') parts.push('Secure')
   return parts.join('; ')
 }
 

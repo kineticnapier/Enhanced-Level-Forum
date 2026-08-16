@@ -20,16 +20,18 @@
     "deploy:web": "npm -w @elf/web run deploy",
     "deploy:admin": "npm -w @elf/admin run deploy",
     "db:migrate": "node scripts/apply-migrations.mjs",
+    "auth:create-admin": "node scripts/create-admin.mjs",
     "import:tuf": "node scripts/import-tuf.mjs",
-    "smoke": "node scripts/smoke.mjs && node scripts/smoke-public.mjs",
+    "smoke": "node scripts/smoke.mjs && node scripts/smoke-public.mjs && node scripts/smoke-auth.mjs",
     "test": "npm run build && npm run smoke",
-    "test:e2e": "node scripts/e2e-smoke.mjs && node scripts/e2e-tuf-reconciliation.mjs && node scripts/e2e-tuf-evidence.mjs && node scripts/e2e-proposal-execution.mjs && node scripts/e2e-reference-proposals.mjs && node scripts/e2e-tuf-create-level.mjs && node scripts/e2e-public-governance.mjs",
+    "test:e2e": "node scripts/e2e-smoke.mjs && node scripts/e2e-tuf-reconciliation.mjs && node scripts/e2e-tuf-evidence.mjs && node scripts/e2e-proposal-execution.mjs && node scripts/e2e-reference-proposals.mjs && node scripts/e2e-tuf-create-level.mjs && node scripts/e2e-public-governance.mjs && node scripts/e2e-production-auth.mjs",
     "test:e2e:reconciliation": "node scripts/e2e-tuf-reconciliation.mjs",
     "test:e2e:tuf-evidence": "node scripts/e2e-tuf-evidence.mjs",
     "test:e2e:proposal-execution": "node scripts/e2e-proposal-execution.mjs",
     "test:e2e:reference-proposals": "node scripts/e2e-reference-proposals.mjs",
     "test:e2e:tuf-create-level": "node scripts/e2e-tuf-create-level.mjs",
-    "test:e2e:public-governance": "node scripts/e2e-public-governance.mjs"
+    "test:e2e:public-governance": "node scripts/e2e-public-governance.mjs",
+    "test:e2e:production-auth": "node scripts/e2e-production-auth.mjs"
   },
   "devDependencies": {
     "typescript": "^5.8.0"

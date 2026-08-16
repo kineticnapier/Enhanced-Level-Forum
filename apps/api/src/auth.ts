@@ -2,7 +2,7 @@ import type { MiddlewareHandler } from 'hono'
 import type { SessionUser, UserRole } from '@elf/shared'
 import { withDb } from './db'
 import type { Env } from './env'
-import { parseCookies } from './http'
+import { parseCookies, sessionCookieName } from './http'
 import { sha256Hex } from './crypto'
 
 type Variables = { user: SessionUser | null }
@@ -21,7 +21,7 @@ export function hasRole(user: SessionUser | null, minimum: UserRole): boolean {
 }
 
 export const loadUser: MiddlewareHandler<AppBindings> = async (c, next) => {
-  const token = parseCookies(c.req.header('Cookie')).elf_session
+  const token = parseCookies(c.req.header('Cookie'))[sessionCookieName(c.env)]
   if (!token) {
     c.set('user', null)
     return next()
@@ -29,10 +29,10 @@ export const loadUser: MiddlewareHandler<AppBindings> = async (c, next) => {
   const tokenHash = await sha256Hex(token)
   const user = await withDb(c.env, async (db) => {
     const result = await db.query(
-      `SELECT u.id, u.email, u.display_name, u.role
+      `SELECT u.id,u.email,u.display_name,u.role
        FROM sessions s
-       JOIN users u ON u.id = s.user_id
-       WHERE s.token_hash = $1 AND s.expires_at > now()`,
+       JOIN users u ON u.id=s.user_id
+       WHERE s.token_hash=$1 AND s.expires_at>now() AND u.is_active=true`,
       [tokenHash],
     )
     if (!result.rowCount) return null
