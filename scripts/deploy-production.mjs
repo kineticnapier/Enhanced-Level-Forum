@@ -4,9 +4,17 @@ import { spawnSync } from 'node:child_process'
 import { loadProductionConfig, writeApiSecretsFile, writeProductionWranglerConfigs } from './production-config.mjs'
 import { ROOT_DIR } from './local-env.mjs'
 
+function executable(command) {
+  return process.platform === 'win32' && ['npm', 'npx'].includes(command) ? `${command}.cmd` : command
+}
+
 function run(command, args, { cwd = ROOT_DIR, env = process.env } = {}) {
   console.log(`\n> ${command} ${args.join(' ')}`)
-  const result = spawnSync(command, args, { cwd, env, stdio: 'inherit', shell: process.platform === 'win32' })
+  const result = spawnSync(executable(command), args, { cwd, env, stdio: 'inherit', shell: false })
+  if (result.error) {
+    console.error(result.error.message)
+    process.exit(1)
+  }
   if (result.status !== 0) process.exit(result.status ?? 1)
 }
 
