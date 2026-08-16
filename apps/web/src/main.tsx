@@ -144,7 +144,7 @@ function App() {
       {route.page === 'proposal' && route.id && <Proposal id={route.id} user={user} />}
       {route.page === 'login' && <Login onLogin={(u) => { setUser(u); location.hash = '#/' }} />}
     </main>
-    <footer>Canonical difficulty is an integer P/G/U tier. Fine-grained votes are evidence, not an official 100-step scale.</footer>
+    <footer>Enhanced Level Forum</footer>
   </div>
 }
 
@@ -154,10 +154,9 @@ function Home() {
   return <>
     <section className="hero">
       <div>
-        <p className="eyebrow">Versioned collaborative ADOFAI difficulty database</p>
-        <h1>Referenceを固定された「正解」にしない。</h1>
-        <p>難易度、投票、Reference、外部データ、Analyzer結果を分離して保存し、判断と履歴を追跡できるフォーラム。</p>
-        <div className="actions"><a className="button" href="#/levels">Level database</a><a className="button secondary" href="#/proposals">Open proposals</a></div>
+        <h1>ADOFAI Difficulty Database</h1>
+        <p>Community ratings, References, proposals, and level history.</p>
+        <div className="actions"><a className="button" href="#/levels">Browse levels</a><a className="button secondary" href="#/proposals">View proposals</a></div>
       </div>
     </section>
     <section className="stats-grid">
@@ -165,14 +164,6 @@ function Home() {
       <Stat label="Active References" value={stats?.activeReferences} />
       <Stat label="Open Proposals" value={stats?.openProposals} />
       <Stat label="Rating Votes" value={stats?.ratingVotes} />
-    </section>
-    <section className="panel rule-panel">
-      <h2>Data rules</h2>
-      <div className="three-col">
-        <div><strong>Version first</strong><p>同じ曲でもOriginal/NerfedはSHA付きLevelVersionとして分離。</p></div>
-        <div><strong>References can move</strong><p>Reference譜面のrerateを禁止しない。矛盾したReference側をNEEDS_REVIEWへ。</p></div>
-        <div><strong>Evidence ≠ decision</strong><p>投票・外部rating・Analyzer予測はcanonical ratingを直接上書きしない。</p></div>
-      </div>
     </section>
   </>
 }
