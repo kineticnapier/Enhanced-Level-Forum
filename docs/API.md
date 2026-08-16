@@ -2,7 +2,9 @@
 
 Base URL in development: `http://localhost:8787/api`.
 
-All browser writes use the HttpOnly `elf_session` cookie and `credentials: include`.
+Browser calls use credentialed fetch. Development sessions use the HttpOnly `elf_session` cookie; production uses host-only `__Host-elf_session`.
+
+For browser state-changing requests, `Origin` must exactly match `WEB_ORIGIN` or `ADMIN_ORIGIN`.
 
 ## Public/auth
 
@@ -12,6 +14,21 @@ All browser writes use the HttpOnly `elf_session` cookie and `credentials: inclu
 - `GET /auth/me`
 - `POST /auth/login`
 - `POST /auth/logout`
+- `POST /auth/logout-all` — authenticated
+- `POST /auth/change-password` — authenticated
+
+Password change body:
+
+```json
+{
+  "currentPassword": "current passphrase",
+  "newPassword": "new passphrase with 12+ chars"
+}
+```
+
+Changing the password revokes every other session for that user.
+
+Password logins are throttled over a 15-minute window. Production requires the `AUTH_RATE_LIMIT_SALT` Worker secret.
 
 ## Levels
 
@@ -40,9 +57,13 @@ Rating evidence body:
 
 ## Proposals
 
+Compatibility routes:
+
 - `GET /proposals?status=`
 - `POST /proposals` — authenticated
 - `POST /proposals/:id/votes` — authenticated
+
+The richer public governance routes live under `/governance/*`.
 
 ## Staff/admin
 
@@ -57,6 +78,8 @@ Rating evidence body:
 - `GET /admin/users` — ADMIN
 - `POST /admin/users` — ADMIN
 - `PATCH /admin/users/:id/role` — ADMIN
+- `PATCH /admin/users/:id/status` — ADMIN
+- `POST /admin/users/:id/reset-password` — ADMIN
 - `GET /admin/import-snapshots` — REFERENCE_MANAGER+
 - `POST /admin/import-snapshots` — REFERENCE_MANAGER+
 - `POST /admin/imports/tuf` — REFERENCE_MANAGER+
@@ -64,7 +87,27 @@ Rating evidence body:
 - `GET /admin/imports/tuf/issues?snapshotId=<uuid>` — REFERENCE_MANAGER+
 - `GET /admin/audit` — MODERATOR+
 
-### TUF import
+### User administration
+
+`POST /admin/users` requires a password between 12 and 256 characters. Accounts are active by default.
+
+Disable/reactivate:
+
+```json
+{ "isActive": false }
+```
+
+sent to `PATCH /admin/users/:id/status`.
+
+Reset password:
+
+```json
+{ "password": "new long passphrase" }
+```
+
+sent to `POST /admin/users/:id/reset-password`. A reset revokes all sessions for the target user. Role changes also revoke sessions. The final active ADMIN cannot be disabled or demoted.
+
+## TUF import
 
 `POST /admin/imports/tuf` without a request body fetches the current public TUF v2 level search and Reference endpoints, stores one raw snapshot, and derives external-only observations.
 
