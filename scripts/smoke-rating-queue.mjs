@@ -62,6 +62,7 @@ for (const invariant of ['/admin/rating-queue', '査定募集を開始', 'Review
 
 const web = await readFile(new URL('../apps/web/src/main.tsx', import.meta.url), 'utf8')
 const queueUi = await readFile(new URL('../apps/web/src/RatingQueue.tsx', import.meta.url), 'utf8')
+const guideUi = await readFile(new URL('../apps/web/src/RatingGuide.tsx', import.meta.url), 'utf8')
 for (const invariant of ["page: 'rating-queue'", '#/rating-queue', 'RatingQueuePage']) {
   if (!web.includes(invariant)) throw new Error(`public queue route missing: ${invariant}`)
 }
@@ -78,9 +79,25 @@ for (const invariant of [
   '#/rating-queue/${item.id}',
   '/rating-queue/${item.id}/rating',
   '譜面表示を開く',
+  "taskId === 'guide'",
+  '#/rating-queue/guide',
+  '査定ガイド',
 ]) {
   if (!queueUi.includes(invariant)) throw new Error(`rater queue UI missing: ${invariant}`)
 }
+for (const invariant of [
+  '譜面査定ガイド',
+  'Anchor Tier',
+  'Lean（-2 ～ +2）',
+  'Confidence',
+  '確定難易度・他の人の査定・TUF',
+  'Mischarted',
+  'Offsync',
+  'Copyright',
+  '送信前チェック',
+]) {
+  if (!guideUi.includes(invariant)) throw new Error(`rating guide missing: ${invariant}`)
+}
 
 console.log('RATING QUEUE STATIC SMOKE PASSED')
-console.log('level display is read-only for rating input -> dedicated claimed rating task -> review-ready evidence -> staff confirms difficulty')
+console.log('level display is read-only for rating input -> guide-backed dedicated rating task -> review-ready evidence -> staff confirms difficulty')
