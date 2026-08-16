@@ -55,7 +55,7 @@ try {
   }
   if (workers.api.vars?.WEB_ORIGIN !== expectedWorkersOrigins.public || workers.api.vars?.ADMIN_ORIGIN !== expectedWorkersOrigins.admin) throw new Error('workers.dev API origins wrong')
   if (workers.api.main !== 'src/worker.ts') throw new Error('production API must use fetch+scheduled Worker entrypoint')
-  if (JSON.stringify(workers.api.triggers?.crons) !== JSON.stringify(['*/30 * * * *'])) throw new Error('production TUF Cron Trigger missing')
+  if (JSON.stringify(workers.api.triggers?.crons) !== JSON.stringify(['*/15 * * * *'])) throw new Error('production TUF Cron Trigger missing')
   if (workers.api.workers_dev !== true || workers.web.workers_dev !== true || workers.admin.workers_dev !== true) throw new Error('workers.dev mode should enable workers_dev')
   if ('routes' in workers.api || 'routes' in workers.web || 'routes' in workers.admin) throw new Error('workers.dev mode must not emit custom-domain routes')
   if (workers.api.preview_urls !== false || workers.web.preview_urls !== false || workers.admin.preview_urls !== false) throw new Error('production preview URLs should stay disabled')
@@ -75,7 +75,7 @@ try {
   if (custom.api.vars?.WEB_ORIGIN !== 'https://forum.example.com' || custom.api.vars?.ADMIN_ORIGIN !== 'https://admin.example.com') throw new Error('custom-domain API origins wrong')
   if (custom.api.hyperdrive?.[0]?.binding !== 'HYPERDRIVE' || custom.api.hyperdrive?.[0]?.id !== common.ELF_HYPERDRIVE_ID) throw new Error('Hyperdrive binding wrong')
   if (!custom.api.secrets?.required?.includes('AUTH_RATE_LIMIT_SALT')) throw new Error('required Worker secret declaration missing')
-  if (JSON.stringify(custom.api.triggers?.crons) !== JSON.stringify(['*/30 * * * *'])) throw new Error('custom-domain production TUF Cron Trigger missing')
+  if (JSON.stringify(custom.api.triggers?.crons) !== JSON.stringify(['*/15 * * * *'])) throw new Error('custom-domain production TUF Cron Trigger missing')
   if (custom.api.routes?.[0]?.pattern !== 'api.example.com' || custom.api.routes?.[0]?.custom_domain !== true) throw new Error('API custom domain wrong')
   if (custom.api.workers_dev !== false || custom.web.workers_dev !== false || custom.admin.workers_dev !== false) throw new Error('custom-domain mode should disable workers.dev')
   if (custom.web.assets?.not_found_handling !== 'single-page-application' || custom.admin.assets?.not_found_handling !== 'single-page-application') throw new Error('SPA static asset routing missing')
@@ -94,7 +94,7 @@ try {
   for (const needle of ['__Host-elf_session', 'access-control-allow-origin', 'PRODUCTION DEPLOY SMOKE PASSED']) if (!smokeSource.includes(needle)) throw new Error(`production live smoke missing ${needle}`)
 
   console.log('CLOUDFLARE PRODUCTION DEPLOY STATIC SMOKE PASSED')
-  console.log('workers.dev bootstrap mode -> later custom-domain mode + 30-minute chunked TUF Cron + parallel build / sequential deploy')
+  console.log('workers.dev bootstrap mode -> later custom-domain mode + 15-minute chunked TUF Cron + parallel build / sequential deploy')
 } finally {
   for (const [key, previous] of Object.entries(saved)) {
     if (previous === undefined) delete process.env[key]
