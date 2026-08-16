@@ -1,5 +1,7 @@
 # Security notes
 
+[日本語](../SECURITY.md) | **English**
+
 ## Authentication
 
 - passwords are stored as PBKDF2-SHA256 hashes with a random salt;
