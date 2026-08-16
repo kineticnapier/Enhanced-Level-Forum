@@ -46,7 +46,11 @@ rating_votes
 External evidence:
 
 ```text
-import_snapshots / external_rating_observations
+import_snapshots
+external_level_observations
+external_rating_observations
+external_reference_observations
+import_issues
 ```
 
 Machine evidence:
@@ -56,6 +60,23 @@ analyzer_runs / analyzer_predictions
 ```
 
 Only a staff rerate workflow writes `canonical_ratings`.
+
+## External import boundary
+
+External services are observations, not alternate writers of ELF truth.
+
+A TUF import does this:
+
+1. fetches the public TUF v2 level pages and Reference list, or accepts the same shape as a test fixture;
+2. stores the complete source payload in `import_snapshots`;
+3. derives normalized external level/rating/reference observation rows;
+4. preserves non-PGU/special labels without coercing them into ELF P/G/U;
+5. records malformed, duplicated, or conflicting source data in `import_issues`;
+6. links an observation to an ELF Level only through an existing external-ID mapping or an exact SHA-256 LevelVersion match.
+
+It explicitly does **not** create an ELF Level, publish a canonical rating, or create/move an ELF Reference. The importer module is statically checked to keep `canonical_ratings` and `difficulty_references` outside its dependency surface.
+
+`external_level_ids` is the persistent source-ID mapping table. An exact SHA-256 match may safely establish this mapping; a disagreement between an existing source-ID mapping and a SHA match is recorded as an import error instead of silently remapping the source ID.
 
 ## References
 
@@ -81,11 +102,10 @@ This intentionally reverses the “Reference cannot be rerated” dependency.
 
 ## Future integration points
 
-The schema already reserves separate tables for:
+The external observation layer is now usable for TUF snapshots. Natural next additions are:
 
-- external TUF / Clastar Galaxy observations;
-- Analyzer model runs and predictions;
-- proposal evidence/history;
-- level tags and version hashes.
-
-The next useful backend additions are importer normalization, Reference redundancy lint, Reference coverage scoring and Analyzer service authentication.
+- a human linking/reconciliation UI for unmatched external level IDs;
+- TUF snapshot diffs and changed-rating alerts;
+- Clastar Galaxy normalization into the same external observation layer;
+- Reference redundancy/coverage lint;
+- Analyzer service authentication and prediction ingestion.

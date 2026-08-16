@@ -38,10 +38,14 @@ async function request(path, { method = 'GET', body, authenticated = true } = {}
 
 let userId = null
 let levelId = null
+let snapshotId = null
 let connected = false
 const suffix = `${Date.now()}-${randomBytes(4).toString('hex')}`
 const email = `elf-e2e-${suffix}@example.invalid`
 const password = `elf-e2e-${randomBytes(16).toString('hex')}`
+const versionSha = randomBytes(32).toString('hex')
+const tufExternalId = String(1_500_000_000 + (randomBytes(4).readUInt32BE(0) % 400_000_000))
+const tufSpecialId = String(Number(tufExternalId) + 1)
 
 try {
   let health
@@ -87,7 +91,7 @@ try {
       creator: 'ELF test runner',
       version: {
         label: 'Original',
-        sha256: randomBytes(32).toString('hex'),
+        sha256: versionSha,
       },
     },
   })).payload
@@ -137,11 +141,93 @@ try {
     throw new Error('expected CANONICAL_RERATE audit entry')
   }
 
+  const canonicalBefore = Number((await db.query(
+    `SELECT count(*)::int AS count FROM canonical_ratings WHERE level_version_id=$1`,
+    [versionId],
+  )).rows[0].count)
+  const referencesBefore = Number((await db.query(
+    `SELECT count(*)::int AS count FROM difficulty_references WHERE level_version_id=$1`,
+    [versionId],
+  )).rows[0].count)
+
+  const imported = (await request('/admin/imports/tuf', {
+    method: 'POST',
+    body: {
+      sourceVersion: `e2e:${suffix}`,
+      rawData: {
+        fetchedAt: new Date().toISOString(),
+        levels: [
+          {
+            id: Number(tufExternalId),
+            song: `TUF linked ${suffix}`,
+            charter: 'ELF test runner',
+            difficulty: { name: 'G9' },
+            dlLink: 'https://example.invalid/level.zip',
+            sha256: versionSha,
+          },
+          {
+            id: Number(tufSpecialId),
+            song: `TUF special ${suffix}`,
+            charter: 'ELF test runner',
+            difficulty: { name: 'Impossible' },
+          },
+        ],
+        references: [
+          {
+            difficulty: { name: 'G9' },
+            levels: [{ id: Number(tufExternalId), type: 'TECH' }],
+          },
+        ],
+      },
+    },
+  })).payload
+  snapshotId = imported.snapshot.id
+
+  if (imported.summary.levels !== 2) throw new Error(`expected 2 imported levels, got ${imported.summary.levels}`)
+  if (imported.summary.ratingObservations !== 2) throw new Error(`expected 2 external ratings, got ${imported.summary.ratingObservations}`)
+  if (imported.summary.referenceObservations !== 1) throw new Error(`expected 1 external reference, got ${imported.summary.referenceObservations}`)
+  if (imported.summary.linkedLevels !== 1 || imported.summary.autoLinkedBySha !== 1) {
+    throw new Error(`expected one SHA-linked level, got linked=${imported.summary.linkedLevels}, auto=${imported.summary.autoLinkedBySha}`)
+  }
+
+  const mapping = await db.query(
+    `SELECT level_id FROM external_level_ids WHERE source='TUF' AND external_id=$1`,
+    [tufExternalId],
+  )
+  if (mapping.rows[0]?.level_id !== levelId) throw new Error('TUF SHA match did not create the expected external ID mapping')
+
+  const special = await db.query(
+    `SELECT family,tier,label FROM external_rating_observations
+     WHERE snapshot_id=$1 AND external_id=$2`,
+    [snapshotId, tufSpecialId],
+  )
+  if (special.rows[0]?.family !== null || special.rows[0]?.tier !== null || special.rows[0]?.label !== 'Impossible') {
+    throw new Error(`special TUF difficulty was not preserved externally: ${JSON.stringify(special.rows[0])}`)
+  }
+
+  const canonicalAfter = Number((await db.query(
+    `SELECT count(*)::int AS count FROM canonical_ratings WHERE level_version_id=$1`,
+    [versionId],
+  )).rows[0].count)
+  const referencesAfter = Number((await db.query(
+    `SELECT count(*)::int AS count FROM difficulty_references WHERE level_version_id=$1`,
+    [versionId],
+  )).rows[0].count)
+  if (canonicalAfter !== canonicalBefore || referencesAfter !== referencesBefore) {
+    throw new Error('TUF import mutated canonical_ratings or difficulty_references')
+  }
+
+  const importSummary = (await request(`/admin/imports/tuf/summary?snapshotId=${snapshotId}`)).payload.summary
+  if (importSummary.levels !== 2 || importSummary.references !== 1) throw new Error('TUF import summary endpoint returned unexpected counts')
+  await request(`/admin/imports/tuf/issues?snapshotId=${snapshotId}`)
+
   console.log('E2E SMOKE PASSED')
   console.log('login -> level -> G9 -> reference -> G10 -> NEEDS_REVIEW -> proposal -> approve -> audit')
+  console.log('TUF fixture -> external observations -> SHA link -> special label preserved -> canonical tables unchanged')
 } finally {
   if (connected) {
     try {
+      if (snapshotId) await db.query('DELETE FROM import_snapshots WHERE id = $1', [snapshotId])
       if (levelId) {
         await db.query('UPDATE levels SET current_version_id = NULL WHERE id = $1', [levelId])
         await db.query('DELETE FROM levels WHERE id = $1', [levelId])

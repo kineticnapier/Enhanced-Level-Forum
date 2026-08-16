@@ -59,7 +59,32 @@ Rating evidence body:
 - `PATCH /admin/users/:id/role` — ADMIN
 - `GET /admin/import-snapshots` — REFERENCE_MANAGER+
 - `POST /admin/import-snapshots` — REFERENCE_MANAGER+
+- `POST /admin/imports/tuf` — REFERENCE_MANAGER+
+- `GET /admin/imports/tuf/summary?snapshotId=<uuid>` — REFERENCE_MANAGER+
+- `GET /admin/imports/tuf/issues?snapshotId=<uuid>` — REFERENCE_MANAGER+
 - `GET /admin/audit` — MODERATOR+
+
+### TUF import
+
+`POST /admin/imports/tuf` without a request body fetches the current public TUF v2 level search and Reference endpoints, stores one raw snapshot, and derives external-only observations.
+
+For deterministic tests/offline imports, the same endpoint accepts:
+
+```json
+{
+  "sourceVersion": "fixture:test",
+  "rawData": {
+    "levels": [],
+    "references": []
+  }
+}
+```
+
+The importer may create an `external_level_ids` mapping when an incoming valid SHA-256 exactly matches an existing ELF `LevelVersion`. It does **not** create ELF Levels and does **not** write `canonical_ratings` or `difficulty_references`.
+
+TUF PGU labels such as `G9` are stored as external rating observations. Non-PGU/special labels are preserved in `label`/`difficulty_label` with no forced ELF PGU conversion.
+
+Import diagnostics are stored in `import_issues`; examples include duplicate TUF IDs, conflicting ratings for the same SHA, malformed Reference rows, and external-ID/SHA mapping conflicts.
 
 Canonical rerate body:
 

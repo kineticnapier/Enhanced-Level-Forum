@@ -20,6 +20,7 @@
     "deploy:web": "npm -w @elf/web run deploy",
     "deploy:admin": "npm -w @elf/admin run deploy",
     "db:migrate": "node scripts/apply-migrations.mjs",
+    "import:tuf": "node scripts/import-tuf.mjs",
     "smoke": "node scripts/smoke.mjs",
     "test": "npm run build && npm run smoke",
     "test:e2e": "node scripts/e2e-smoke.mjs"
