@@ -25,7 +25,10 @@ type ReviewAssessment = {
 function median(values: number[]): number {
   const sorted = [...values].sort((a, b) => a - b)
   const middle = Math.floor(sorted.length / 2)
-  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2
+  const upper = sorted[middle]!
+  if (sorted.length % 2) return upper
+  const lower = sorted[middle - 1]!
+  return (lower + upper) / 2
 }
 
 function assessVotes(votes: VoteRow[], minVotes: number, maxVotes: number): ReviewAssessment {
@@ -40,7 +43,7 @@ function assessVotes(votes: VoteRow[], minVotes: number, maxVotes: number): Revi
   const sameFamily = families.size === 1
   const candidate = sameFamily
     ? {
-        family: votes[0].family,
+        family: votes[0]!.family,
         tier: Math.min(30, Math.max(1, Math.round(median(scores)))),
       }
     : null
@@ -393,7 +396,7 @@ export function registerRatingQueueRoutes(app: Hono<AppBindings>) {
 
   app.patch('/api/admin/rating-queue/:id', loadUser, requireRole('MODERATOR'), async (c) => {
     const user = c.get('user')!
-    const body = await c.req.json<{ status?: string }>().catch(() => ({}))
+    const body: { status?: string } = await c.req.json<{ status?: string }>().catch((): { status?: string } => ({}))
     if (body.status !== 'CLOSED') return c.json({ error: 'Only status=CLOSED is supported' }, 400)
     const closed = await withDb(c.env, async (db) => inTransaction(db, async () => {
       const item = await db.query(`SELECT * FROM rating_queue_items WHERE id=$1 FOR UPDATE`, [c.req.param('id')])
