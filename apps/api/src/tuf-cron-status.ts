@@ -1,5 +1,5 @@
 import type { Hono } from 'hono'
-import { requireRole, type AppBindings } from './auth'
+import { loadUser, requireRole, type AppBindings } from './auth'
 import { withDb, type DbClient } from './db'
 
 const SOURCE = 'TUF'
@@ -53,7 +53,7 @@ function healthOf(state: any, trackingAvailable: boolean, now = Date.now()) {
 }
 
 export function registerTufCronStatusRoutes(app: Hono<AppBindings>) {
-  app.get('/api/admin/imports/tuf/cron-status', requireRole('REFERENCE_MANAGER'), async (c) => {
+  app.get('/api/admin/imports/tuf/cron-status', loadUser, requireRole('REFERENCE_MANAGER'), async (c) => {
     const status = await withDb(c.env, async (db) => {
       const stateResult = await readState(db)
       const state = stateResult.row
