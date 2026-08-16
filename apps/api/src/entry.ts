@@ -10,6 +10,7 @@ import { registerProductionAuth } from './production-auth'
 import { registerPublicRoutes } from './public'
 import { registerRatingQueueRoutes } from './rating-queue'
 import { createLevelFromTufObservation, linkTufObservation, listTufUnlinked, TufReconciliationError } from './reconciliation/tuf'
+import { registerTufCronStatusRoutes } from './tuf-cron-status'
 
 type TufImportBody = { rawData?: TufRawSnapshot; sourceVersion?: string | null }
 type TufLinkBody = { observationId?: string; levelId?: string; levelVersionId?: string | null }
@@ -38,6 +39,7 @@ const app = new Hono<AppBindings>()
 registerProductionAuth(app)
 registerLevelMetadataRoutes(app)
 registerRatingQueueRoutes(app)
+registerTufCronStatusRoutes(app)
 app.route('/', coreApp)
 registerLevelMetadataCatalogRoutes(app)
 registerPublicRoutes(app)

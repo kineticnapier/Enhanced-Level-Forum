@@ -4,7 +4,7 @@ import { parseEnvText, ROOT_DIR } from './local-env.mjs'
 
 const PRODUCTION_ENV = resolve(ROOT_DIR, '.env.production')
 const DEPLOY_MODES = new Set(['workers_dev', 'custom_domain'])
-const TUF_IMPORT_CRON = '*/30 * * * *'
+const TUF_IMPORT_CRON = '*/15 * * * *'
 const WORKER_NAMES = {
   public: 'enhanced-level-forum-web',
   admin: 'enhanced-level-forum-admin',
