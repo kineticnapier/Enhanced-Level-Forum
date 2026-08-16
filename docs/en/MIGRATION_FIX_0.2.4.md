@@ -1,5 +1,7 @@
 # v0.2.5 migration fix
 
+[日本語](../MIGRATION_FIX_0.2.4.md) | **English**
+
 ## Symptom
 
 `npm run db:migrate` fails near `references` with PostgreSQL error `42601`.
