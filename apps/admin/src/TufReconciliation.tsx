@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { LevelDetail, LevelListItem } from '@elf/shared'
 import { api } from './api'
+import { TufEvidenceProposals } from './TufEvidenceProposals'
 
 type QueueRow = {
   observationId: string
@@ -89,32 +90,35 @@ export function TufReconciliation() {
     finally{setBusy(false)}
   }
 
-  return <div className="panel">
-    <div className="title-row"><div><p className="eyebrow">TUF → ELF</p><h2>Reconciliation queue</h2></div><strong>{queue?`${queue.total} unlinked`:'Loading…'}</strong></div>
-    <p className="muted">最新TUF snapshotの未リンク譜面だけを表示します。ここで作るのはexternal ID mappingで、canonical ratingやELF Referenceは変更しません。</p>
-    {queue?.snapshot&&<p className="muted">Snapshot: <code>{queue.snapshot.id}</code> · {new Date(queue.snapshot.importedAt).toLocaleString()}</p>}
-    <div className="grid"><input placeholder="TUF ID / title / song / creator" value={search} onChange={(e)=>setSearch(e.target.value)} onKeyDown={(e)=>{if(e.key==='Enter')void loadQueue(0,search)}}/><button onClick={()=>void loadQueue(0,search)}>Search</button></div>
-    {message&&<p className="notice">{message}</p>}{error&&<p className="error">{error}</p>}
-    {!queue?.snapshot?<p>No TUF snapshot has been imported yet.</p>:<div className="split">
-      <div>
-        <div className="list">{queue.rows.map((row)=><button key={row.observationId} className={selected?.observationId===row.observationId?'selected':''} onClick={()=>chooseObservation(row)}>
-          <span>{row.difficultyLabel??'—'}</span><strong>{row.title??row.song??`TUF #${row.externalId}`}</strong><small>#{row.externalId} · {row.creator??'unknown'}{row.referenceCount?` · refs ${row.referenceCount} (${row.referenceTypes.join(', ')})`:''}{row.issues.error||row.issues.warning?` · issues E${row.issues.error}/W${row.issues.warning}`:''}</small>
-        </button>)}</div>
-        {!queue.rows.length&&<p className="muted">No unlinked rows match this search.</p>}
-        <div className="actions"><button className="secondary" disabled={offset===0} onClick={()=>void loadQueue(Math.max(0,offset-PAGE_SIZE),search)}>Previous</button><span className="muted">{queue.total?`${offset+1}–${Math.min(offset+PAGE_SIZE,queue.total)} / ${queue.total}`:'0 / 0'}</span><button className="secondary" disabled={offset+PAGE_SIZE>=queue.total} onClick={()=>void loadQueue(offset+PAGE_SIZE,search)}>Next</button></div>
-      </div>
-      <div>{selected?<div>
-        <h3>{selected.title??selected.song??`TUF #${selected.externalId}`}</h3>
-        <p><b>{selected.difficultyLabel??'Unrated'}</b> · TUF #{selected.externalId} · {selected.creator??'creator unknown'}</p>
-        <p className="muted">SHA-256: <code>{selected.sha256??'not supplied by TUF'}</code></p>
-        {selected.downloadUrl&&<p className="muted">Download URL is present in the imported evidence.</p>}
-        <h3>Find existing ELF Level</h3>
-        <div className="grid"><input value={candidateSearch} onChange={(e)=>setCandidateSearch(e.target.value)} onKeyDown={(e)=>{if(e.key==='Enter')void searchLevels()}}/><button onClick={()=>void searchLevels()}>Find</button></div>
-        <select value={levelId} onChange={(e)=>void chooseLevel(e.target.value)}><option value="">Select ELF Level</option>{levels.map((level)=><option key={level.id} value={level.id}>{level.currentRating?`${level.currentRating.family}${level.currentRating.tier} · `:''}{level.title} · {level.creator}</option>)}</select>
-        {detail&&<><h3>Version link (optional)</h3><select value={versionId} onChange={(e)=>setVersionId(e.target.value)}><option value="">Level only</option>{detail.versions.map((version)=><option key={version.id} value={version.id}>{version.label}{version.id===detail.currentVersionId?' (current)':''} · {version.sha256??'no SHA'}</option>)}</select><p className="muted">Level-only mapping is persistent for future imports. A Version is attached explicitly only to this snapshot; future imports still require an exact SHA match for automatic Version linkage.</p></>}
-        {shaConflict&&<p className="error">Selected Version has a different SHA-256. The API will reject this link.</p>}
-        <button disabled={!levelId||busy||shaConflict} onClick={()=>void link()}>{busy?'Linking…':'Link TUF ID to ELF'}</button>
-      </div>:<p className="muted">Select an unlinked TUF row.</p>}</div>
-    </div>}
-  </div>
+  return <>
+    <div className="panel">
+      <div className="title-row"><div><p className="eyebrow">TUF → ELF</p><h2>Reconciliation queue</h2></div><strong>{queue?`${queue.total} unlinked`:'Loading…'}</strong></div>
+      <p className="muted">最新TUF snapshotの未リンク譜面だけを表示します。ここで作るのはexternal ID mappingで、canonical ratingやELF Referenceは変更しません。</p>
+      {queue?.snapshot&&<p className="muted">Snapshot: <code>{queue.snapshot.id}</code> · {new Date(queue.snapshot.importedAt).toLocaleString()}</p>}
+      <div className="grid"><input placeholder="TUF ID / title / song / creator" value={search} onChange={(e)=>setSearch(e.target.value)} onKeyDown={(e)=>{if(e.key==='Enter')void loadQueue(0,search)}}/><button onClick={()=>void loadQueue(0,search)}>Search</button></div>
+      {message&&<p className="notice">{message}</p>}{error&&<p className="error">{error}</p>}
+      {!queue?.snapshot?<p>No TUF snapshot has been imported yet.</p>:<div className="split">
+        <div>
+          <div className="list">{queue.rows.map((row)=><button key={row.observationId} className={selected?.observationId===row.observationId?'selected':''} onClick={()=>chooseObservation(row)}>
+            <span>{row.difficultyLabel??'—'}</span><strong>{row.title??row.song??`TUF #${row.externalId}`}</strong><small>#{row.externalId} · {row.creator??'unknown'}{row.referenceCount?` · refs ${row.referenceCount} (${row.referenceTypes.join(', ')})`:''}{row.issues.error||row.issues.warning?` · issues E${row.issues.error}/W${row.issues.warning}`:''}</small>
+          </button>)}</div>
+          {!queue.rows.length&&<p className="muted">No unlinked rows match this search.</p>}
+          <div className="actions"><button className="secondary" disabled={offset===0} onClick={()=>void loadQueue(Math.max(0,offset-PAGE_SIZE),search)}>Previous</button><span className="muted">{queue.total?`${offset+1}–${Math.min(offset+PAGE_SIZE,queue.total)} / ${queue.total}`:'0 / 0'}</span><button className="secondary" disabled={offset+PAGE_SIZE>=queue.total} onClick={()=>void loadQueue(offset+PAGE_SIZE,search)}>Next</button></div>
+        </div>
+        <div>{selected?<div>
+          <h3>{selected.title??selected.song??`TUF #${selected.externalId}`}</h3>
+          <p><b>{selected.difficultyLabel??'Unrated'}</b> · TUF #{selected.externalId} · {selected.creator??'creator unknown'}</p>
+          <p className="muted">SHA-256: <code>{selected.sha256??'not supplied by TUF'}</code></p>
+          {selected.downloadUrl&&<p className="muted">Download URL is present in the imported evidence.</p>}
+          <h3>Find existing ELF Level</h3>
+          <div className="grid"><input value={candidateSearch} onChange={(e)=>setCandidateSearch(e.target.value)} onKeyDown={(e)=>{if(e.key==='Enter')void searchLevels()}}/><button onClick={()=>void searchLevels()}>Find</button></div>
+          <select value={levelId} onChange={(e)=>void chooseLevel(e.target.value)}><option value="">Select ELF Level</option>{levels.map((level)=><option key={level.id} value={level.id}>{level.currentRating?`${level.currentRating.family}${level.currentRating.tier} · `:''}{level.title} · {level.creator}</option>)}</select>
+          {detail&&<><h3>Version link (optional)</h3><select value={versionId} onChange={(e)=>setVersionId(e.target.value)}><option value="">Level only</option>{detail.versions.map((version)=><option key={version.id} value={version.id}>{version.label}{version.id===detail.currentVersionId?' (current)':''} · {version.sha256??'no SHA'}</option>)}</select><p className="muted">Level-only mapping is persistent for future imports. A Version is attached explicitly only to this snapshot; future imports still require an exact SHA match for automatic Version linkage.</p></>}
+          {shaConflict&&<p className="error">Selected Version has a different SHA-256. The API will reject this link.</p>}
+          <button disabled={!levelId||busy||shaConflict} onClick={()=>void link()}>{busy?'Linking…':'Link TUF ID to ELF'}</button>
+        </div>:<p className="muted">Select an unlinked TUF row.</p>}</div>
+      </div>}
+    </div>
+    <TufEvidenceProposals/>
+  </>
 }

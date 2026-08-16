@@ -149,8 +149,9 @@ export async function linkTufObservation(
       if (!versionResult.rowCount) {
         throw new TufReconciliationError(400, 'Selected ELF version does not belong to the selected level')
       }
-      version = versionResult.rows[0]
-      if (observation.sha256 && version.sha256 && observation.sha256.toLowerCase() !== version.sha256.toLowerCase()) {
+      const selectedVersion = versionResult.rows[0] as { id: string; label: string; sha256: string | null }
+      version = selectedVersion
+      if (observation.sha256 && selectedVersion.sha256 && observation.sha256.toLowerCase() !== selectedVersion.sha256.toLowerCase()) {
         throw new TufReconciliationError(409, 'TUF SHA-256 conflicts with the selected ELF version SHA-256')
       }
     }

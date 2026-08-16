@@ -23,7 +23,7 @@ for (const route of ['/api/levels', '/api/references', '/api/proposals', '/api/a
 if (!api.includes("version: '0.3.0'")) throw new Error('API version mismatch')
 
 const entry = await readFile(new URL('../apps/api/src/entry.ts', import.meta.url), 'utf8')
-for (const route of ["'/api/admin/imports/tuf'", "'/api/admin/imports/tuf/issues'", "'/api/admin/imports/tuf/unlinked'", "'/api/admin/imports/tuf/link'"]) {
+for (const route of ["'/api/admin/imports/tuf'", "'/api/admin/imports/tuf/issues'", "'/api/admin/imports/tuf/unlinked'", "'/api/admin/imports/tuf/link'", "'/api/admin/imports/tuf/evidence'", "'/api/admin/imports/tuf/proposals'"]) {
   if (!entry.includes(route)) throw new Error(`TUF route missing: ${route}`)
 }
 if (!entry.includes('fetchConsistentTufSnapshot')) throw new Error('TUF import route is not using consistent pagination fetch')
@@ -67,19 +67,47 @@ if (!tufReconciliation.includes('conflicts with the selected ELF version SHA-256
   throw new Error('TUF manual Version linking must reject known SHA conflicts')
 }
 
+const tufEvidence = await readFile(new URL('../apps/api/src/evidence/tuf.ts', import.meta.url), 'utf8')
+for (const invariant of ['canonical_ratings', 'external_rating_observations', 'external_reference_observations', 'proposals', 'createdFromExternalEvidence', 'PROPOSAL_CREATE']) {
+  if (!tufEvidence.includes(invariant)) throw new Error(`TUF evidence proposal invariant missing: ${invariant}`)
+}
+for (const forbiddenMutation of [
+  'INSERT INTO canonical_ratings',
+  'UPDATE canonical_ratings',
+  'DELETE FROM canonical_ratings',
+  'INSERT INTO difficulty_references',
+  'UPDATE difficulty_references',
+  'DELETE FROM difficulty_references',
+]) {
+  if (tufEvidence.includes(forbiddenMutation)) throw new Error(`TUF evidence workflow must not mutate canonical data: ${forbiddenMutation}`)
+}
+if (!tufEvidence.includes('create proposals only from the latest TUF snapshot')) {
+  throw new Error('TUF evidence proposals must reject stale snapshot evidence')
+}
+if (!tufEvidence.includes('not a canonical P/G/U integer tier')) {
+  throw new Error('special/non-PGU TUF labels must not become canonical rerate proposals')
+}
+if (!tufEvidence.includes('An open proposal already covers this TUF evidence')) {
+  throw new Error('TUF evidence workflow must guard duplicate open proposals')
+}
+
 const wrangler = await readFile(new URL('../apps/api/wrangler.jsonc', import.meta.url), 'utf8')
 if (!wrangler.includes('"main": "src/entry.ts"')) throw new Error('Wrangler is not using importer-aware entrypoint')
 
 const web = await readFile(new URL('../apps/web/src/main.tsx', import.meta.url), 'utf8')
 const admin = await readFile(new URL('../apps/admin/src/main.tsx', import.meta.url), 'utf8')
 const adminReconciliation = await readFile(new URL('../apps/admin/src/TufReconciliation.tsx', import.meta.url), 'utf8')
+const adminEvidence = await readFile(new URL('../apps/admin/src/TufEvidenceProposals.tsx', import.meta.url), 'utf8')
 if (web.includes('AdoForum') || admin.includes('AdoForum')) throw new Error('legacy AdoForum branding remains in UI')
 if (!web.includes('Enhanced Level Forum') || !admin.includes('Enhanced Level Forum')) throw new Error('ELF branding missing')
 if (!admin.includes('TufReconciliation') || !adminReconciliation.includes('/admin/imports/tuf/unlinked') || !adminReconciliation.includes('/admin/imports/tuf/link')) {
   throw new Error('TUF reconciliation admin UI is not wired')
 }
+if (!adminReconciliation.includes('TufEvidenceProposals') || !adminEvidence.includes('/admin/imports/tuf/evidence') || !adminEvidence.includes('/admin/imports/tuf/proposals')) {
+  throw new Error('TUF evidence proposal admin UI is not wired')
+}
 
-for (const script of ['local-env.mjs', 'setup-local.mjs', 'dev-api.mjs', 'e2e-smoke.mjs', 'e2e-tuf-reconciliation.mjs', 'import-tuf.mjs']) {
+for (const script of ['local-env.mjs', 'setup-local.mjs', 'dev-api.mjs', 'e2e-smoke.mjs', 'e2e-tuf-reconciliation.mjs', 'e2e-tuf-evidence.mjs', 'import-tuf.mjs']) {
   await readFile(new URL(`./${script}`, import.meta.url), 'utf8')
 }
 
@@ -89,3 +117,4 @@ console.log('canonical difficulty: integer P/G/U tier')
 console.log('human vote evidence: 5-step lean (-2..2), not a 100-step official scale')
 console.log('TUF import: stable two-pass RECENT_ASC pagination; external observations only')
 console.log('TUF reconciliation: explicit Level/Version link; no canonical mutation; remap/SHA conflict guards')
+console.log('TUF evidence: latest linked rating comparison -> human RERATE proposal; canonical tables remain untouched')
