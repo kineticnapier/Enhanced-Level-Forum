@@ -450,11 +450,50 @@ function ProposalForm({ levels, onCreated }: { levels: LevelListItem[]; onCreate
 }
 
 function Login({ onLogin }: { onLogin:(u:SessionUser)=>void }) {
-  const { t } = useI18n()
+  const { t, locale } = useI18n()
+  const [mode,setMode]=useState<'login'|'register'>('login')
   const [email,setEmail]=useState('')
+  const [displayName,setDisplayName]=useState('')
   const [password,setPassword]=useState('')
+  const [confirm,setConfirm]=useState('')
   const [error,setError]=useState('')
-  return <section className="narrow"><div className="panel"><h1>{t('auth.login')}</h1><label>{t('auth.email')}<input value={email} onChange={(e)=>setEmail(e.target.value)} /></label><label>{t('auth.password')}<input type="password" value={password} onChange={(e)=>setPassword(e.target.value)} /></label>{error&&<p className="error">{error}</p>}<button onClick={async()=>{try{const r=await api<{user:SessionUser}>('/auth/login',{method:'POST',body:JSON.stringify({email,password})});onLogin(r.user)}catch(e){setError(e instanceof Error?e.message:t('auth.loginFailed'))}}}>{t('auth.login')}</button></div></section>
+  const [busy,setBusy]=useState(false)
+  const copy=locale==='ja' ? {
+    login:'ログイン', register:'アカウント作成', displayName:'表示名', confirm:'パスワード（確認）',
+    registerHelp:'新規アカウントは閲覧者（VIEWER）として作成されます。RATERへの昇格は管理者が行います。',
+    passwordHelp:'パスワードは12文字以上にしてください。', mismatch:'パスワードが一致しません。',
+    registerFailed:'アカウント作成に失敗しました', switchLogin:'すでにアカウントがある', switchRegister:'アカウントを作る',
+  } : {
+    login:'Login', register:'Create account', displayName:'Display name', confirm:'Confirm password',
+    registerHelp:'New accounts are created as VIEWER. An administrator must promote an account before it can rate as a RATER.',
+    passwordHelp:'Use a password with at least 12 characters.', mismatch:'Passwords do not match.',
+    registerFailed:'Account creation failed', switchLogin:'I already have an account', switchRegister:'Create an account',
+  }
+  const switchMode=(next:'login'|'register')=>{setMode(next);setError('');setConfirm('')}
+  const submit=async()=>{
+    setError('')
+    if(mode==='register'&&password!==confirm){setError(copy.mismatch);return}
+    setBusy(true)
+    try{
+      const endpoint=mode==='register'?'/auth/register':'/auth/login'
+      const body=mode==='register'?{email,displayName,password}:{email,password}
+      const r=await api<{user:SessionUser}>(endpoint,{method:'POST',body:JSON.stringify(body)})
+      onLogin(r.user)
+    }catch(e){setError(e instanceof Error?e.message:(mode==='register'?copy.registerFailed:t('auth.loginFailed')))}
+    finally{setBusy(false)}
+  }
+  return <section className="narrow"><div className="panel">
+    <div className="actions auth-mode-actions"><button className={mode==='login'?'':'ghost'} onClick={()=>switchMode('login')}>{copy.login}</button><button className={mode==='register'?'':'ghost'} onClick={()=>switchMode('register')}>{copy.register}</button></div>
+    <h1>{mode==='login'?copy.login:copy.register}</h1>
+    {mode==='register'&&<p className="note">{copy.registerHelp}</p>}
+    <label>{t('auth.email')}<input type="email" autoComplete="email" value={email} onChange={(e)=>setEmail(e.target.value)} /></label>
+    {mode==='register'&&<label>{copy.displayName}<input maxLength={80} autoComplete="nickname" value={displayName} onChange={(e)=>setDisplayName(e.target.value)} /></label>}
+    <label>{t('auth.password')}<input type="password" autoComplete={mode==='register'?'new-password':'current-password'} value={password} onChange={(e)=>setPassword(e.target.value)} /></label>
+    {mode==='register'&&<><label>{copy.confirm}<input type="password" autoComplete="new-password" value={confirm} onChange={(e)=>setConfirm(e.target.value)} /></label><p className="muted">{copy.passwordHelp}</p></>}
+    {error&&<p className="error">{error}</p>}
+    <button disabled={busy||!email||!password||(mode==='register'&&(!displayName.trim()||!confirm))} onClick={()=>void submit()}>{busy?t('common.loading'):(mode==='login'?copy.login:copy.register)}</button>
+    <p className="muted auth-switch-copy">{mode==='login'?<button className="ghost" onClick={()=>switchMode('register')}>{copy.switchRegister}</button>:<button className="ghost" onClick={()=>switchMode('login')}>{copy.switchLogin}</button>}</p>
+  </div></section>
 }
 
 createRoot(document.getElementById('root')!).render(<React.StrictMode><I18nProvider><App /></I18nProvider></React.StrictMode>)
