@@ -23,8 +23,9 @@ for (const route of ['/api/levels', '/api/references', '/api/proposals', '/api/a
 if (!api.includes("version: '0.3.0'")) throw new Error('API version mismatch')
 
 const entry = await readFile(new URL('../apps/api/src/entry.ts', import.meta.url), 'utf8')
-if (!entry.includes("'/api/admin/imports/tuf'")) throw new Error('TUF import route missing')
-if (!entry.includes("'/api/admin/imports/tuf/issues'")) throw new Error('TUF import issues route missing')
+for (const route of ["'/api/admin/imports/tuf'", "'/api/admin/imports/tuf/issues'", "'/api/admin/imports/tuf/unlinked'", "'/api/admin/imports/tuf/link'"]) {
+  if (!entry.includes(route)) throw new Error(`TUF route missing: ${route}`)
+}
 if (!entry.includes('fetchConsistentTufSnapshot')) throw new Error('TUF import route is not using consistent pagination fetch')
 
 const tufFetcher = await readFile(new URL('../apps/api/src/importers/tuf-fetch.ts', import.meta.url), 'utf8')
@@ -52,15 +53,33 @@ if (!tufImporter.includes("severity: 'INFO', kind: 'MISSING_REFERENCE_TYPE'")) {
   throw new Error('missing TUF reference types should be informational source metadata')
 }
 
+const tufReconciliation = await readFile(new URL('../apps/api/src/reconciliation/tuf.ts', import.meta.url), 'utf8')
+for (const invariant of ['external_level_ids', 'external_level_observations', 'external_rating_observations', 'external_reference_observations', 'TUF_MANUAL_LINK']) {
+  if (!tufReconciliation.includes(invariant)) throw new Error(`TUF reconciliation invariant missing: ${invariant}`)
+}
+if (tufReconciliation.includes('canonical_ratings') || tufReconciliation.includes('difficulty_references')) {
+  throw new Error('TUF reconciliation must not mutate canonical ELF rating/reference tables')
+}
+if (!tufReconciliation.includes('already mapped to a different ELF level')) {
+  throw new Error('TUF manual linking must reject silent external-ID remaps')
+}
+if (!tufReconciliation.includes('conflicts with the selected ELF version SHA-256')) {
+  throw new Error('TUF manual Version linking must reject known SHA conflicts')
+}
+
 const wrangler = await readFile(new URL('../apps/api/wrangler.jsonc', import.meta.url), 'utf8')
 if (!wrangler.includes('"main": "src/entry.ts"')) throw new Error('Wrangler is not using importer-aware entrypoint')
 
 const web = await readFile(new URL('../apps/web/src/main.tsx', import.meta.url), 'utf8')
 const admin = await readFile(new URL('../apps/admin/src/main.tsx', import.meta.url), 'utf8')
+const adminReconciliation = await readFile(new URL('../apps/admin/src/TufReconciliation.tsx', import.meta.url), 'utf8')
 if (web.includes('AdoForum') || admin.includes('AdoForum')) throw new Error('legacy AdoForum branding remains in UI')
 if (!web.includes('Enhanced Level Forum') || !admin.includes('Enhanced Level Forum')) throw new Error('ELF branding missing')
+if (!admin.includes('TufReconciliation') || !adminReconciliation.includes('/admin/imports/tuf/unlinked') || !adminReconciliation.includes('/admin/imports/tuf/link')) {
+  throw new Error('TUF reconciliation admin UI is not wired')
+}
 
-for (const script of ['local-env.mjs', 'setup-local.mjs', 'dev-api.mjs', 'e2e-smoke.mjs', 'import-tuf.mjs']) {
+for (const script of ['local-env.mjs', 'setup-local.mjs', 'dev-api.mjs', 'e2e-smoke.mjs', 'e2e-tuf-reconciliation.mjs', 'import-tuf.mjs']) {
   await readFile(new URL(`./${script}`, import.meta.url), 'utf8')
 }
 
@@ -69,3 +88,4 @@ console.log(`migrations: ${migrationFiles.join(', ')}`)
 console.log('canonical difficulty: integer P/G/U tier')
 console.log('human vote evidence: 5-step lean (-2..2), not a 100-step official scale')
 console.log('TUF import: stable two-pass RECENT_ASC pagination; external observations only')
+console.log('TUF reconciliation: explicit Level/Version link; no canonical mutation; remap/SHA conflict guards')

@@ -3,8 +3,12 @@ import { requireRole } from './auth'
 import { withDb } from './db'
 import { importTufSnapshot, type TufRawSnapshot } from './importers/tuf'
 import { fetchConsistentTufSnapshot } from './importers/tuf-fetch'
+import { linkTufObservation, listTufUnlinked, TufReconciliationError } from './reconciliation/tuf'
 
 type TufImportBody = { rawData?: TufRawSnapshot; sourceVersion?: string | null }
+type TufLinkBody = { observationId?: string; levelId?: string; levelVersionId?: string | null }
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
 app.post('/api/admin/imports/tuf', requireRole('REFERENCE_MANAGER'), async (c) => {
   const user = c.get('user')!
@@ -18,6 +22,53 @@ app.post('/api/admin/imports/tuf', requireRole('REFERENCE_MANAGER'), async (c) =
   }))
 
   return c.json(result, 201)
+})
+
+app.get('/api/admin/imports/tuf/unlinked', requireRole('REFERENCE_MANAGER'), async (c) => {
+  const snapshotId = c.req.query('snapshotId')?.trim() || null
+  if (snapshotId && !UUID_RE.test(snapshotId)) return c.json({ error: 'Invalid snapshotId' }, 400)
+
+  const rawLimit = Number(c.req.query('limit') ?? 50)
+  const rawOffset = Number(c.req.query('offset') ?? 0)
+  const limit = Number.isFinite(rawLimit) ? Math.trunc(rawLimit) : 50
+  const offset = Number.isFinite(rawOffset) ? Math.trunc(rawOffset) : 0
+
+  try {
+    const result = await withDb(c.env, (db) => listTufUnlinked(db, {
+      snapshotId,
+      search: c.req.query('search') ?? '',
+      limit,
+      offset,
+    }))
+    return c.json(result)
+  } catch (error) {
+    if (error instanceof TufReconciliationError) return c.json({ error: error.message }, error.status)
+    throw error
+  }
+})
+
+app.post('/api/admin/imports/tuf/link', requireRole('REFERENCE_MANAGER'), async (c) => {
+  const user = c.get('user')!
+  const body = await c.req.json<TufLinkBody>().catch((): TufLinkBody => ({}))
+  const observationId = body.observationId?.trim() ?? ''
+  const levelId = body.levelId?.trim() ?? ''
+  const levelVersionId = body.levelVersionId?.trim() || null
+  if (!UUID_RE.test(observationId) || !UUID_RE.test(levelId) || (levelVersionId && !UUID_RE.test(levelVersionId))) {
+    return c.json({ error: 'observationId and levelId must be UUIDs; levelVersionId must be a UUID when supplied' }, 400)
+  }
+
+  try {
+    const result = await withDb(c.env, (db) => linkTufObservation(db, {
+      observationId,
+      levelId,
+      levelVersionId,
+      actorId: user.id,
+    }))
+    return c.json(result)
+  } catch (error) {
+    if (error instanceof TufReconciliationError) return c.json({ error: error.message }, error.status)
+    throw error
+  }
 })
 
 app.get('/api/admin/imports/tuf/issues', requireRole('REFERENCE_MANAGER'), async (c) => {
