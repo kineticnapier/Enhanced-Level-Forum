@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import type { RatingQueueItem, SessionUser } from '@elf/shared'
+import type { Family, RatingLean, RatingQueueItem, SessionUser } from '@elf/shared'
 import { api } from './api'
 import { useI18n } from './i18n'
 import './rating-queue.css'
@@ -18,7 +18,19 @@ function isStaff(user: SessionUser | null) {
   return !!user && ['MODERATOR','ADMIN'].includes(user.role)
 }
 
+function taskIdFromHash() {
+  const raw = (location.hash || '#/rating-queue').slice(1).split('?')[0]
+  const parts = raw.split('/').filter(Boolean)
+  return parts[0] === 'rating-queue' && parts[1] ? parts[1] : null
+}
+
 export function RatingQueuePage({ user }: { user: SessionUser | null }) {
+  const taskId = taskIdFromHash()
+  if (taskId) return <RatingTaskPage user={user} id={taskId} />
+  return <RatingQueueList user={user} />
+}
+
+function RatingQueueList({ user }: { user: SessionUser | null }) {
   const { locale } = useI18n()
   const ja = locale === 'ja'
   const copy = ja ? {
@@ -36,8 +48,9 @@ export function RatingQueuePage({ user }: { user: SessionUser | null }) {
     emptyReview: '確認待ちの譜面はありません。',
     claim: 'これを査定する',
     release: '担当を外す',
-    rate: '譜面を開いて査定',
+    rate: '査定画面を開く',
     detail: '譜面を見る',
+    reviewDetail: '査定内容を確認',
     progress: (item: RatingQueueItem) => `${item.voteCount}/${item.minVotes} 票`,
     capacity: (item: RatingQueueItem) => `担当中 ${item.activeClaimCount} · 最大 ${item.maxVotes} 票`,
     candidate: '候補',
@@ -62,8 +75,9 @@ export function RatingQueuePage({ user }: { user: SessionUser | null }) {
     emptyReview: 'Nothing is waiting for staff review.',
     claim: 'Claim rating',
     release: 'Release claim',
-    rate: 'Open level and rate',
+    rate: 'Open rating task',
     detail: 'View level',
+    reviewDetail: 'Inspect rating task',
     progress: (item: RatingQueueItem) => `${item.voteCount}/${item.minVotes} votes`,
     capacity: (item: RatingQueueItem) => `${item.activeClaimCount} claimed · max ${item.maxVotes} votes`,
     candidate: 'Candidate',
@@ -99,6 +113,10 @@ export function RatingQueuePage({ user }: { user: SessionUser | null }) {
     setBusy(item.id); setError('')
     try {
       await api(`/rating-queue/${item.id}/claim`, { method: action === 'claim' ? 'POST' : 'DELETE' })
+      if (action === 'claim') {
+        location.hash = `#/rating-queue/${item.id}`
+        return
+      }
       await load()
     } catch (e) { setError(e instanceof Error ? e.message : String(e)) }
     finally { setBusy('') }
@@ -125,8 +143,9 @@ export function RatingQueuePage({ user }: { user: SessionUser | null }) {
     </div>
     <div className="rating-queue-actions">
       {mode === 'open' && <button disabled={busy === item.id} onClick={() => void mutate(item, 'claim')}>{copy.claim}</button>}
-      {mode === 'mine' && <><a className="button" href={`#/levels/${item.levelId}`}>{copy.rate}</a><button className="ghost" disabled={busy === item.id} onClick={() => void mutate(item, 'release')}>{copy.release}</button></>}
-      {(mode === 'submitted' || mode === 'review') && <a className="button secondary" href={`#/levels/${item.levelId}`}>{copy.detail}</a>}
+      {mode === 'mine' && <><a className="button" href={`#/rating-queue/${item.id}`}>{copy.rate}</a><button className="ghost" disabled={busy === item.id} onClick={() => void mutate(item, 'release')}>{copy.release}</button></>}
+      {mode === 'submitted' && <a className="button secondary" href={`#/levels/${item.levelId}`}>{copy.detail}</a>}
+      {mode === 'review' && <a className="button secondary" href={`#/rating-queue/${item.id}`}>{copy.reviewDetail}</a>}
     </div>
   </article>
 
@@ -152,5 +171,114 @@ export function RatingQueuePage({ user }: { user: SessionUser | null }) {
     {!open.length && <p className="muted">{copy.emptyOpen}</p>}
 
     {isStaff(user) && <><h2>{copy.review}</h2><div className="rating-queue-grid">{review.map((item) => card(item, 'review'))}</div>{!review.length && <p className="muted">{copy.emptyReview}</p>}</>}
+  </section>
+}
+
+function RatingTaskPage({ user, id }: { user: SessionUser | null; id: string }) {
+  const { locale, lean: leanLabel } = useI18n()
+  const ja = locale === 'ja'
+  const copy = ja ? {
+    title: '譜面査定', back: '← 査定キューへ', login: '査定するにはRATERでログインしてください。', denied: 'RATER以上の権限が必要です。',
+    version: '対象バージョン', sha: 'SHA-256', noSha: 'SHAなし', download: '配布ページ', video: '動画を見る', level: '譜面表示を開く',
+    blind: 'この画面では、他人の査定・確定難易度・TUFなどの外部Ratingを査定前に表示しません。',
+    claimNeeded: 'この譜面を担当してから査定を送信できます。', claim: 'この譜面を担当する', release: '担当を外す',
+    submitted: 'このバージョンへの査定は提出済みです。', reviewReady: 'この査定ラウンドはスタッフ確認待ちです。',
+    family: '難易度帯', tier: '基準Tier', lean: 'Tier内の位置', confidence: '確信度', comment: 'コメント（任意）', submit: '査定を提出',
+    failed: '査定タスクの読み込みに失敗しました',
+  } : {
+    title: 'Rate level', back: '← Rating Queue', login: 'Log in with a RATER account to rate this level.', denied: 'This task requires RATER or higher.',
+    version: 'Target version', sha: 'SHA-256', noSha: 'no SHA', download: 'Download', video: 'Watch video', level: 'Open level display',
+    blind: 'This task does not show peer ratings, the confirmed rating, or external/TUF rating evidence before submission.',
+    claimNeeded: 'Claim this task before submitting a rating.', claim: 'Claim this task', release: 'Release claim',
+    submitted: 'You already submitted a rating for this Version.', reviewReady: 'This rating round is waiting for staff review.',
+    family: 'Family', tier: 'Anchor tier', lean: 'Position within tier', confidence: 'Confidence', comment: 'Comment (optional)', submit: 'Submit rating',
+    failed: 'Failed to load rating task',
+  }
+
+  const [item, setItem] = useState<RatingQueueItem | null>(null)
+  const [family, setFamily] = useState<Family>('G')
+  const [tier, setTier] = useState(1)
+  const [lean, setLean] = useState<RatingLean>(0)
+  const [confidence, setConfidence] = useState(3)
+  const [comment, setComment] = useState('')
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const load = async () => {
+    if (!canRate(user)) return
+    setError('')
+    try {
+      const result = await api<{ item: RatingQueueItem }>(`/rating-queue/${id}`)
+      setItem(result.item)
+    } catch (e) { setError(e instanceof Error ? e.message : copy.failed) }
+  }
+  useEffect(() => { void load() }, [id, user?.id])
+
+  if (!user) return <section><div className="panel"><h1>{copy.title}</h1><p>{copy.login}</p><a className="button" href="#/login">Login</a></div></section>
+  if (!canRate(user)) return <section><div className="panel"><h1>{copy.title}</h1><p>{copy.denied}</p></div></section>
+  if (error && !item) return <section><a className="back-link" href="#/rating-queue">{copy.back}</a><div className="panel error">{error}</div></section>
+  if (!item) return <section><div className="panel">Loading…</div></section>
+
+  const claimed = item.myClaimStatus === 'ACTIVE'
+  const submitted = item.myVoteSubmitted || item.myClaimStatus === 'SUBMITTED'
+  const open = item.status === 'OPEN'
+
+  const claim = async () => {
+    setBusy(true); setError('')
+    try { await api(`/rating-queue/${item.id}/claim`, { method: 'POST' }); await load() }
+    catch (e) { setError(e instanceof Error ? e.message : String(e)) }
+    finally { setBusy(false) }
+  }
+  const release = async () => {
+    setBusy(true); setError('')
+    try { await api(`/rating-queue/${item.id}/claim`, { method: 'DELETE' }); location.hash = '#/rating-queue' }
+    catch (e) { setError(e instanceof Error ? e.message : String(e)) }
+    finally { setBusy(false) }
+  }
+  const submit = async () => {
+    setBusy(true); setError('')
+    try {
+      await api(`/rating-queue/${item.id}/rating`, {
+        method: 'POST',
+        body: JSON.stringify({ family, anchorTier: tier, lean, confidence, comment }),
+      })
+      location.hash = '#/rating-queue'
+    } catch (e) { setError(e instanceof Error ? e.message : String(e)) }
+    finally { setBusy(false) }
+  }
+
+  return <section className="rating-task-page">
+    <a className="back-link" href="#/rating-queue">{copy.back}</a>
+    <div className="rating-task-head panel">
+      <div>
+        <p className="eyebrow">{item.artist}</p>
+        <h1>{item.song}</h1>
+        <p>{item.creator}{item.effecter ? ` · FX: ${item.effecter}` : ''}</p>
+      </div>
+      <div className="rating-task-version"><span>{copy.version}</span><strong>{item.versionLabel}</strong><code>{item.sha256 ?? copy.noSha}</code></div>
+      <div className="rating-task-links">
+        {item.videoUrl && <a className="button" href={item.videoUrl} target="_blank" rel="noreferrer">{copy.video}</a>}
+        {item.downloadUrl && <a className="button secondary" href={item.downloadUrl} target="_blank" rel="noreferrer">{copy.download}</a>}
+        <a className="button ghost" href={`#/levels/${item.levelId}`}>{copy.level}</a>
+      </div>
+    </div>
+
+    <p className="note rating-queue-blind">{copy.blind}</p>
+    {error && <p className="error">{error}</p>}
+
+    {!open && <div className="panel"><strong>{copy.reviewReady}</strong></div>}
+    {submitted && <div className="panel"><strong>{copy.submitted}</strong></div>}
+    {open && !submitted && !claimed && <div className="panel"><p>{copy.claimNeeded}</p><button disabled={busy} onClick={() => void claim()}>{copy.claim}</button></div>}
+
+    {open && claimed && !submitted && <div className="panel rating-task-form">
+      <div className="form-grid">
+        <label>{copy.family}<select value={family} onChange={(e) => setFamily(e.target.value as Family)}><option>P</option><option>G</option><option>U</option></select></label>
+        <label>{copy.tier}<input type="number" min="1" max="30" value={tier} onChange={(e) => setTier(Number(e.target.value))} /></label>
+        <label>{copy.lean}<select value={lean} onChange={(e) => setLean(Number(e.target.value) as RatingLean)}>{([-2,-1,0,1,2] as RatingLean[]).map((value) => <option key={value} value={value}>{leanLabel(value)}</option>)}</select></label>
+        <label>{copy.confidence}<select value={confidence} onChange={(e) => setConfidence(Number(e.target.value))}>{[1,2,3,4,5].map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
+      </div>
+      <textarea value={comment} onChange={(e) => setComment(e.target.value)} maxLength={4000} placeholder={copy.comment} />
+      <div className="rating-task-submit"><button disabled={busy} onClick={() => void submit()}>{copy.submit}</button><button className="ghost" disabled={busy} onClick={() => void release()}>{copy.release}</button></div>
+    </div>}
   </section>
 }
