@@ -89,12 +89,14 @@ export interface LevelDetail extends LevelListItem {
   }>
   references: Array<{
     id: string
+    levelVersionId: string
     family: Family
     tier: number
     technique: string
     positionHint: RatingLean | null
     status: ReferenceStatus
     confidence: number | null
+    notes: string | null
   }>
 }
 
