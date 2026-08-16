@@ -1,5 +1,7 @@
 import { pbkdf2 as nodePbkdf2, timingSafeEqual } from 'node:crypto'
 
+const PBKDF2_ITERATIONS = 100_000
+
 function toBase64Url(bytes: Uint8Array): string {
   let binary = ''
   for (const byte of bytes) binary += String.fromCharCode(byte)
@@ -34,18 +36,19 @@ export async function sha256Hex(value: string): Promise<string> {
 }
 
 export async function hashPassword(password: string): Promise<string> {
-  const iterations = 210_000
   const salt = new Uint8Array(16)
   crypto.getRandomValues(salt)
-  const bits = await pbkdf2Sha256(password, salt, iterations, 32)
-  return `pbkdf2-sha256$${iterations}$${toBase64Url(salt)}$${toBase64Url(bits)}`
+  const bits = await pbkdf2Sha256(password, salt, PBKDF2_ITERATIONS, 32)
+  return `pbkdf2-sha256$${PBKDF2_ITERATIONS}$${toBase64Url(salt)}$${toBase64Url(bits)}`
 }
 
 export async function verifyPassword(password: string, encoded: string): Promise<boolean> {
   const [algorithm, iterationText, saltText, hashText] = encoded.split('$')
   if (algorithm !== 'pbkdf2-sha256' || !iterationText || !saltText || !hashText) return false
   const iterations = Number(iterationText)
-  if (!Number.isInteger(iterations) || iterations < 100_000) return false
+  // Cloudflare Workers currently rejects PBKDF2 iteration counts above 100,000.
+  // Legacy 210k hashes must be reset out-of-band before production login.
+  if (!Number.isInteger(iterations) || iterations < PBKDF2_ITERATIONS || iterations > PBKDF2_ITERATIONS) return false
   const salt = fromBase64Url(saltText)
   const expected = fromBase64Url(hashText)
   const actual = await pbkdf2Sha256(password, salt, iterations, expected.byteLength)
