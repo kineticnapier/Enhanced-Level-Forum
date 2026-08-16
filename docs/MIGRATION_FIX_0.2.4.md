@@ -1,20 +1,22 @@
-# v0.2.5 migration fix
+# v0.2.5 マイグレーション修正
 
-## Symptom
+[English](en/MIGRATION_FIX_0.2.4.md)
 
-`npm run db:migrate` fails near `references` with PostgreSQL error `42601`.
+## 症状
 
-## Cause
+`npm run db:migrate` が `references` 付近で PostgreSQL エラー `42601` により失敗します。
 
-`REFERENCES` is part of PostgreSQL SQL grammar. Using the unquoted identifier `references` as a table name makes statements such as `CREATE TABLE references (...)` invalid.
+## 原因
 
-## Fix
+`REFERENCES` は PostgreSQL SQL 文法の一部です。引用符なしの `references` をテーブル名にすると、`CREATE TABLE references (...)` などが不正になります。
 
-The database table was renamed to `difficulty_references`. API URLs and TypeScript response property names are unchanged (`/api/references`, `references`).
+## 修正
 
-`001_initial.sql` is wrapped in `BEGIN` / `COMMIT`, so a failed v0.2.3 application rolls back its schema changes. `schema_migrations` may already exist because the migration runner creates that table before applying migration files; this is harmless. No database recreation is required.
+DBテーブル名を `difficulty_references` に変更しました。API URLとTypeScriptレスポンスのプロパティ名は従来どおり (`/api/references`, `references`) です。
 
-Run:
+`001_initial.sql` は `BEGIN` / `COMMIT` で囲まれているため、失敗した v0.2.3 適用はschema変更ごとrollbackされます。migration runnerがファイル適用前に作るため `schema_migrations` だけ残っていることがありますが問題ありません。DB作り直しは不要です。
+
+実行:
 
 ```powershell
 $env:DATABASE_URL="postgres://postgres:postgres@127.0.0.1:5432/adoforum"

@@ -1,8 +1,10 @@
 # Build fix 0.2.3
 
-TypeScript did not know Vite's `import.meta.env` shape in the public frontend.
+[English](en/BUILD_FIX_0.2.2.md)
 
-Added `src/env.d.ts` to both `apps/web` and `apps/admin`:
+公開フロントエンドで TypeScript が Vite の `import.meta.env` の型を認識していませんでした。
+
+`apps/web` と `apps/admin` の両方に `src/env.d.ts` を追加しました。
 
 ```ts
 interface ImportMetaEnv {
@@ -14,4 +16,4 @@ interface ImportMeta {
 }
 ```
 
-This intentionally declares only the environment variable currently consumed by Enhanced Level Forum and does not rely on ambient Vite client declarations.
+Enhanced Level Forum が現在利用する環境変数だけを明示的に宣言し、Vite clientのambient型宣言には依存しません。

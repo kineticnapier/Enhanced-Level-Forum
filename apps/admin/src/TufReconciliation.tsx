@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { LevelDetail, LevelListItem } from '@elf/shared'
 import { api } from './api'
+import { useI18n } from './i18n'
 import { TufEvidenceProposals } from './TufEvidenceProposals'
 
 type QueueRow = {
@@ -28,6 +29,7 @@ type QueueResponse = {
 const PAGE_SIZE = 50
 
 export function TufReconciliation({canCreateLevel=false}:{canCreateLevel?:boolean}) {
+  const { t, date } = useI18n()
   const [queue,setQueue]=useState<QueueResponse|null>(null)
   const [search,setSearch]=useState('')
   const [offset,setOffset]=useState(0)
@@ -69,7 +71,7 @@ export function TufReconciliation({canCreateLevel=false}:{canCreateLevel?:boolea
     setLevels([]);setLevelId('');setDetail(null);setVersionId('');setMessage('');setError('')
     setCreateSong((row.song||row.title||`TUF #${row.externalId}`).trim())
     setCreateTitle((row.title||row.song||`TUF #${row.externalId}`).trim())
-    setCreateCreator((row.creator||'Unknown').trim())
+    setCreateCreator((row.creator||t('common.unknown')).trim())
     setCreateVersionLabel('Original')
     setCreateSha(row.sha256??'')
     setCreateUrl(row.downloadUrl??'')
@@ -98,10 +100,10 @@ export function TufReconciliation({canCreateLevel=false}:{canCreateLevel?:boolea
         method:'POST',
         body:JSON.stringify({observationId:selected.observationId,levelId,levelVersionId:versionId||null}),
       })
-      setMessage(`Linked TUF #${selected.externalId} → ${result.level.title}${result.version?` / ${result.version.label}`:''}`)
+      setMessage(t('tuf.linked',{id:selected.externalId,title:result.level.title,version:result.version?` / ${result.version.label}`:''}))
       clearSelection()
       await loadQueue(offset,search)
-    }catch(e){setError(e instanceof Error?e.message:'Link failed')}
+    }catch(e){setError(e instanceof Error?e.message:t('tuf.linkFailed'))}
     finally{setBusy(false)}
   }
 
@@ -119,50 +121,50 @@ export function TufReconciliation({canCreateLevel=false}:{canCreateLevel?:boolea
           version:{label:createVersionLabel,sha256:createSha||null,downloadUrl:createUrl||null},
         }),
       })
-      setMessage(`Created & linked TUF #${selected.externalId} → ${result.level.title} / ${result.version.label}. ELF canonical remains Unrated.`)
+      setMessage(t('tuf.created',{id:selected.externalId,title:result.level.title,version:result.version.label}))
       clearSelection()
       await loadQueue(offset,search)
-    }catch(e){setError(e instanceof Error?e.message:'Create Level failed')}
+    }catch(e){setError(e instanceof Error?e.message:t('tuf.createFailed'))}
     finally{setBusy(false)}
   }
 
   return <>
     <div className="panel">
-      <div className="title-row"><div><p className="eyebrow">TUF → ELF</p><h2>Reconciliation queue</h2></div><strong>{queue?`${queue.total} unlinked`:'Loading…'}</strong></div>
-      <p className="muted">最新TUF snapshotの未リンク譜面だけを表示します。既存Levelへのlinkも新規Level作成も、TUF ratingをcanonicalへ直接コピーしません。</p>
-      {queue?.snapshot&&<p className="muted">Snapshot: <code>{queue.snapshot.id}</code> · {new Date(queue.snapshot.importedAt).toLocaleString()}</p>}
-      <div className="grid"><input placeholder="TUF ID / title / song / creator" value={search} onChange={(e)=>setSearch(e.target.value)} onKeyDown={(e)=>{if(e.key==='Enter')void loadQueue(0,search)}}/><button onClick={()=>void loadQueue(0,search)}>Search</button></div>
+      <div className="title-row"><div><p className="eyebrow">{t('tuf.queueEyebrow')}</p><h2>{t('tuf.queueTitle')}</h2></div><strong>{queue?t('tuf.unlinkedCount',{count:queue.total}):t('common.loading')}</strong></div>
+      <p className="muted">{t('tuf.queueDescription')}</p>
+      {queue?.snapshot&&<p className="muted">{t('tuf.snapshot')}: <code>{queue.snapshot.id}</code> · {date(queue.snapshot.importedAt)}</p>}
+      <div className="grid"><input placeholder={t('tuf.searchPlaceholder')} value={search} onChange={(e)=>setSearch(e.target.value)} onKeyDown={(e)=>{if(e.key==='Enter')void loadQueue(0,search)}}/><button onClick={()=>void loadQueue(0,search)}>{t('common.search')}</button></div>
       {message&&<p className="notice">{message}</p>}{error&&<p className="error">{error}</p>}
-      {!queue?.snapshot?<p>No TUF snapshot has been imported yet.</p>:<div className="split">
+      {!queue?.snapshot?<p>{t('tuf.noSnapshot')}</p>:<div className="split">
         <div>
           <div className="list">{queue.rows.map((row)=><button key={row.observationId} className={selected?.observationId===row.observationId?'selected':''} onClick={()=>chooseObservation(row)}>
-            <span>{row.difficultyLabel??'—'}</span><strong>{row.title??row.song??`TUF #${row.externalId}`}</strong><small>#{row.externalId} · {row.creator??'unknown'}{row.referenceCount?` · refs ${row.referenceCount} (${row.referenceTypes.join(', ')})`:''}{row.issues.error||row.issues.warning?` · issues E${row.issues.error}/W${row.issues.warning}`:''}</small>
+            <span>{row.difficultyLabel??'—'}</span><strong>{row.title??row.song??`TUF #${row.externalId}`}</strong><small>#{row.externalId} · {row.creator??t('tuf.creatorUnknown')}{row.referenceCount?` · ${t('tuf.referencesShort',{count:row.referenceCount,types:row.referenceTypes.join(', ')})}`:''}{row.issues.error||row.issues.warning?` · ${t('tuf.issuesShort',{error:row.issues.error,warning:row.issues.warning})}`:''}</small>
           </button>)}</div>
-          {!queue.rows.length&&<p className="muted">No unlinked rows match this search.</p>}
-          <div className="actions"><button className="secondary" disabled={offset===0} onClick={()=>void loadQueue(Math.max(0,offset-PAGE_SIZE),search)}>Previous</button><span className="muted">{queue.total?`${offset+1}–${Math.min(offset+PAGE_SIZE,queue.total)} / ${queue.total}`:'0 / 0'}</span><button className="secondary" disabled={offset+PAGE_SIZE>=queue.total} onClick={()=>void loadQueue(offset+PAGE_SIZE,search)}>Next</button></div>
+          {!queue.rows.length&&<p className="muted">{t('tuf.noUnlinked')}</p>}
+          <div className="actions"><button className="secondary" disabled={offset===0} onClick={()=>void loadQueue(Math.max(0,offset-PAGE_SIZE),search)}>{t('common.previous')}</button><span className="muted">{queue.total?`${offset+1}–${Math.min(offset+PAGE_SIZE,queue.total)} / ${queue.total}`:'0 / 0'}</span><button className="secondary" disabled={offset+PAGE_SIZE>=queue.total} onClick={()=>void loadQueue(offset+PAGE_SIZE,search)}>{t('common.next')}</button></div>
         </div>
         <div>{selected?<div>
           <h3>{selected.title??selected.song??`TUF #${selected.externalId}`}</h3>
-          <p><b>{selected.difficultyLabel??'Unrated'}</b> · TUF #{selected.externalId} · {selected.creator??'creator unknown'}</p>
-          <p className="muted">SHA-256: <code>{selected.sha256??'not supplied by TUF'}</code></p>
-          {selected.downloadUrl&&<p className="muted">Download URL is present in the imported evidence.</p>}
-          <h3>Find existing ELF Level</h3>
-          <div className="grid"><input value={candidateSearch} onChange={(e)=>setCandidateSearch(e.target.value)} onKeyDown={(e)=>{if(e.key==='Enter')void searchLevels()}}/><button onClick={()=>void searchLevels()}>Find</button></div>
-          <select value={levelId} onChange={(e)=>void chooseLevel(e.target.value)}><option value="">Select ELF Level</option>{levels.map((level)=><option key={level.id} value={level.id}>{level.currentRating?`${level.currentRating.family}${level.currentRating.tier} · `:''}{level.title} · {level.creator}</option>)}</select>
-          {detail&&<><h3>Version link (optional)</h3><select value={versionId} onChange={(e)=>setVersionId(e.target.value)}><option value="">Level only</option>{detail.versions.map((version)=><option key={version.id} value={version.id}>{version.label}{version.id===detail.currentVersionId?' (current)':''} · {version.sha256??'no SHA'}</option>)}</select><p className="muted">Level-only mapping is persistent for future imports. A Version is attached explicitly only to this snapshot; future imports still require an exact SHA match for automatic Version linkage.</p></>}
-          {shaConflict&&<p className="error">Selected Version has a different SHA-256. The API will reject this link.</p>}
-          <button disabled={!levelId||busy||shaConflict} onClick={()=>void link()}>{busy?'Working…':'Link TUF ID to ELF'}</button>
-          <h3>Create new ELF Level</h3>
+          <p><b>{selected.difficultyLabel??t('common.unrated')}</b> · TUF #{selected.externalId} · {selected.creator??t('tuf.creatorUnknown')}</p>
+          <p className="muted">SHA-256: <code>{selected.sha256??t('tuf.shaNotSupplied')}</code></p>
+          {selected.downloadUrl&&<p className="muted">{t('tuf.downloadPresent')}</p>}
+          <h3>{t('tuf.findExisting')}</h3>
+          <div className="grid"><input value={candidateSearch} onChange={(e)=>setCandidateSearch(e.target.value)} onKeyDown={(e)=>{if(e.key==='Enter')void searchLevels()}}/><button onClick={()=>void searchLevels()}>{t('tuf.find')}</button></div>
+          <select value={levelId} onChange={(e)=>void chooseLevel(e.target.value)}><option value="">{t('tuf.selectLevel')}</option>{levels.map((level)=><option key={level.id} value={level.id}>{level.currentRating?`${level.currentRating.family}${level.currentRating.tier} · `:''}{level.title} · {level.creator}</option>)}</select>
+          {detail&&<><h3>{t('tuf.versionLink')}</h3><select value={versionId} onChange={(e)=>setVersionId(e.target.value)}><option value="">{t('tuf.levelOnly')}</option>{detail.versions.map((version)=><option key={version.id} value={version.id}>{version.label}{version.id===detail.currentVersionId?` (${t('tuf.versionCurrent')})`:''} · {version.sha256??t('tuf.versionNoSha')}</option>)}</select><p className="muted">{t('tuf.versionLinkHelp')}</p></>}
+          {shaConflict&&<p className="error">{t('tuf.shaConflict')}</p>}
+          <button disabled={!levelId||busy||shaConflict} onClick={()=>void link()}>{busy?t('common.working'):t('tuf.link')}</button>
+          <h3>{t('tuf.createNew')}</h3>
           {canCreateLevel?<>
-            <p className="muted">Imported metadata is only a starting point. Edit it before creation if needed. The new Level is immediately reconciled to this TUF ID, but stays canonically Unrated.</p>
-            <input placeholder="Song / composer" value={createSong} onChange={(e)=>setCreateSong(e.target.value)}/>
-            <input placeholder="Level title" value={createTitle} onChange={(e)=>setCreateTitle(e.target.value)}/>
-            <input placeholder="Creator" value={createCreator} onChange={(e)=>setCreateCreator(e.target.value)}/>
-            <div className="grid"><input placeholder="Version label" value={createVersionLabel} onChange={(e)=>setCreateVersionLabel(e.target.value)}/><input placeholder="SHA-256 (optional)" value={createSha} onChange={(e)=>setCreateSha(e.target.value)}/></div>
-            <input placeholder="Download URL (optional)" value={createUrl} onChange={(e)=>setCreateUrl(e.target.value)}/>
-            <button disabled={busy||!createSong.trim()||!createTitle.trim()||!createCreator.trim()||!createVersionLabel.trim()} onClick={()=>void createLevel()}>{busy?'Working…':'Create ELF Level & link'}</button>
-          </>:<p className="muted">Creating a new canonical ELF Level requires MODERATOR or ADMIN. REFERENCE_MANAGER can still link this TUF ID to an existing Level.</p>}
-        </div>:<p className="muted">Select an unlinked TUF row.</p>}</div>
+            <p className="muted">{t('tuf.createHelp')}</p>
+            <input placeholder={t('tuf.createSong')} value={createSong} onChange={(e)=>setCreateSong(e.target.value)}/>
+            <input placeholder={t('tuf.createTitle')} value={createTitle} onChange={(e)=>setCreateTitle(e.target.value)}/>
+            <input placeholder={t('tuf.createCreator')} value={createCreator} onChange={(e)=>setCreateCreator(e.target.value)}/>
+            <div className="grid"><input placeholder={t('tuf.createVersion')} value={createVersionLabel} onChange={(e)=>setCreateVersionLabel(e.target.value)}/><input placeholder={t('tuf.createSha')} value={createSha} onChange={(e)=>setCreateSha(e.target.value)}/></div>
+            <input placeholder={t('tuf.createUrl')} value={createUrl} onChange={(e)=>setCreateUrl(e.target.value)}/>
+            <button disabled={busy||!createSong.trim()||!createTitle.trim()||!createCreator.trim()||!createVersionLabel.trim()} onClick={()=>void createLevel()}>{busy?t('common.working'):t('tuf.createButton')}</button>
+          </>:<p className="muted">{t('tuf.createPermission')}</p>}
+        </div>:<p className="muted">{t('tuf.selectUnlinked')}</p>}</div>
       </div>}
     </div>
     <TufEvidenceProposals/>

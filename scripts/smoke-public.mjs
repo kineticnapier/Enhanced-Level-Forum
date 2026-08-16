@@ -44,10 +44,12 @@ for (const ui of [
   '/governance/proposals',
   'ProposalChange',
   'ExecutionState',
-  'Coverage matrix',
-  'Community difficulty evidence',
-  'Discussion',
-  'Voters',
+  "t('references.coverage')",
+  "t('level.evidence')",
+  "t('proposal.discussion')",
+  "t('proposal.voters')",
+  'I18nProvider',
+  'LanguageSwitch',
 ]) {
   if (!web.includes(ui)) throw new Error(`public UI workflow missing: ${ui}`)
 }
