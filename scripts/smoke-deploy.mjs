@@ -83,13 +83,18 @@ try {
 
   const setupSource = await readFile(resolve(ROOT_DIR, 'scripts/setup-production.mjs'), 'utf8')
   const deploySource = await readFile(resolve(ROOT_DIR, 'scripts/deploy-production.mjs'), 'utf8')
+  const parallelSource = await readFile(resolve(ROOT_DIR, 'scripts/run-parallel.mjs'), 'utf8')
   const smokeSource = await readFile(resolve(ROOT_DIR, 'scripts/smoke-production.mjs'), 'utf8')
   for (const needle of ['hyperdrive', 'apply-migrations', 'create-admin']) if (!setupSource.includes(needle)) throw new Error(`production setup missing ${needle}`)
-  for (const needle of ['--secrets-file', 'VITE_API_URL', 'wrangler.production.generated.json', "runParallel('Build'", "runParallel('Deploy'"]) if (!deploySource.includes(needle)) throw new Error(`production deploy missing ${needle}`)
+  for (const needle of ['--secrets-file', 'VITE_API_URL', 'wrangler.production.generated.json', "runParallel('Build'", '=== Deploy (sequential) ===', "label: 'API deploy'", "label: 'public frontend deploy'", "label: 'admin frontend deploy'", 'terminateTree', "process.once('SIGINT'"]) {
+    if (!deploySource.includes(needle)) throw new Error(`production deploy missing ${needle}`)
+  }
+  if (deploySource.includes("runParallel('Deploy'")) throw new Error('Wrangler deploys must not run in parallel')
+  for (const needle of ['taskkill', '/T', '/F', "process.once('SIGINT'", 'terminateTree']) if (!parallelSource.includes(needle)) throw new Error(`parallel runner interrupt cleanup missing ${needle}`)
   for (const needle of ['__Host-elf_session', 'access-control-allow-origin', 'PRODUCTION DEPLOY SMOKE PASSED']) if (!smokeSource.includes(needle)) throw new Error(`production live smoke missing ${needle}`)
 
   console.log('CLOUDFLARE PRODUCTION DEPLOY STATIC SMOKE PASSED')
-  console.log('workers.dev bootstrap mode -> later custom-domain mode + 30-minute chunked TUF Cron + parallel deploy')
+  console.log('workers.dev bootstrap mode -> later custom-domain mode + 30-minute chunked TUF Cron + parallel build / sequential deploy')
 } finally {
   for (const [key, previous] of Object.entries(saved)) {
     if (previous === undefined) delete process.env[key]
