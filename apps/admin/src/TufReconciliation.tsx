@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { LevelDetail, LevelListItem } from '@elf/shared'
 import { api } from './api'
 import { useI18n } from './i18n'
+import { TufCronStatus } from './TufCronStatus'
 import { TufEvidenceProposals } from './TufEvidenceProposals'
 
 type QueueRow = {
@@ -139,6 +140,7 @@ export function TufReconciliation({canCreateLevel=false}:{canCreateLevel?:boolea
   }
 
   return <>
+    <TufCronStatus/>
     <div className="panel">
       <div className="title-row"><div><p className="eyebrow">{t('tuf.queueEyebrow')}</p><h2>{t('tuf.queueTitle')}</h2></div><strong>{queue?t('tuf.unlinkedCount',{count:queue.total}):t('common.loading')}</strong></div>
       <p className="muted">{t('tuf.queueDescription')}</p>
