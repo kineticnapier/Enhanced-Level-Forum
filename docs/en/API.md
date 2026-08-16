@@ -1,5 +1,7 @@
 # API v0.3
 
+[日本語](../API.md) | **English**
+
 Base URL in development: `http://localhost:8787/api`.
 
 Browser calls use credentialed fetch. Development sessions use the HttpOnly `elf_session` cookie; production uses host-only `__Host-elf_session`.
