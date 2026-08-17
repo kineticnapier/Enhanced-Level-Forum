@@ -1,5 +1,7 @@
 # Level / Variant / Version
 
+[English](en/LEVEL_VARIANTS.md)
+
 ELF separates a chart work from gameplay variants and file revisions.
 
 ```text
