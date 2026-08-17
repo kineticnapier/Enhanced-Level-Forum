@@ -5,6 +5,7 @@ const scheduled = await readFile(new URL('../apps/api/src/importers/tuf-schedule
 const importer = await readFile(new URL('../apps/api/src/importers/tuf.ts', import.meta.url), 'utf8')
 const migration = await readFile(new URL('../db/migrations/005_tuf_incremental_crawl.sql', import.meta.url), 'utf8')
 const statusMigration = await readFile(new URL('../db/migrations/008_tuf_cron_status.sql', import.meta.url), 'utf8')
+const finalizeMigration = await readFile(new URL('../db/migrations/010_tuf_chunked_finalize.sql', import.meta.url), 'utf8')
 const statusApi = await readFile(new URL('../apps/api/src/tuf-cron-status.ts', import.meta.url), 'utf8')
 const entry = await readFile(new URL('../apps/api/src/entry.ts', import.meta.url), 'utf8')
 const adminStatus = await readFile(new URL('../apps/admin/src/TufCronStatus.tsx', import.meta.url), 'utf8')
@@ -30,12 +31,18 @@ for (const invariant of [
 for (const invariant of [
   'PAGE_LIMIT = 100',
   'PAGES_PER_RUN = 10',
+  'FINALIZE_LEVELS_PER_RUN = 1000',
   "LEVEL_SORT = 'RECENT_ASC'",
   'tuf_crawl_state',
   'tuf_crawl_levels',
+  'tuf_finalize_levels',
   'verifyOverlap',
+  'beginFinalize',
+  'finalizeLevelChunk',
+  'publishSnapshot',
+  "phase: 'PUBLISH'",
+  "status: 'FINALIZING'",
   'pg_try_advisory_lock',
-  'importTufSnapshot',
   "'TUF_SCHEDULED_IMPORT'",
   "status: 'DEFERRED'",
   "status: 'PROGRESS'",
@@ -52,6 +59,16 @@ for (const invariant of ['CREATE TABLE IF NOT EXISTS tuf_crawl_state', 'CREATE T
 for (const invariant of ['last_run_at', 'last_status', 'last_reason', 'last_snapshot_id', 'consecutive_deferred', "'FAILED'"]) {
   if (!statusMigration.includes(invariant)) throw new Error(`TUF Cron status migration missing: ${invariant}`)
 }
+for (const invariant of [
+  "phase text NOT NULL DEFAULT 'CRAWL'",
+  'finalize_offset',
+  'references_raw',
+  'CREATE TABLE IF NOT EXISTS tuf_finalize_levels',
+  'CREATE TABLE IF NOT EXISTS tuf_finalize_issues',
+  "'FINALIZING'",
+]) {
+  if (!finalizeMigration.includes(invariant)) throw new Error(`TUF chunked finalize migration missing: ${invariant}`)
+}
 
 for (const invariant of [
   "import { loadUser, requireRole, type AppBindings } from './auth'",
@@ -63,11 +80,13 @@ for (const invariant of [
   "return 'STALE'",
   'latestSnapshot',
   'stagedLevels',
+  'finalizeOffset',
+  'finalizeProgress',
 ]) {
   if (!statusApi.includes(invariant)) throw new Error(`TUF Cron status API missing: ${invariant}`)
 }
 if (!entry.includes('registerTufCronStatusRoutes(app)')) throw new Error('TUF Cron status routes are not registered')
-for (const invariant of ['/admin/imports/tuf/cron-status', 'TUF Cron Status', 'Consecutive deferred', '60_000', '最大1000 levels', '*/15 * * * *']) {
+for (const invariant of ['/admin/imports/tuf/cron-status', 'TUF Cron Status', 'Consecutive deferred', '60_000', '1000 levels', 'Snapshot準備', '*/15 * * * *']) {
   if (!adminStatus.includes(invariant)) throw new Error(`TUF Cron admin panel missing: ${invariant}`)
 }
 if (!reconciliation.includes('<TufCronStatus/>')) throw new Error('TUF reconciliation must show Cron status')
@@ -99,6 +118,6 @@ if (!deploy.includes("=== Deploy (sequential) ===")) throw new Error('production
 if (deploy.includes("runParallel('Deploy'")) throw new Error('production deploy must not run Wrangler jobs in parallel')
 
 console.log('TUF CRON STATIC SMOKE PASSED')
-console.log('every 15 minutes -> up to 10 pages / 1000 levels per step -> persistent staging -> complete external snapshot only')
-console.log('Admin Imports shows persisted last tick/status/progress/snapshot health without touching canonical data')
+console.log('every 15 minutes -> crawl 1000 levels/tick -> finalize 1000 levels/tick -> atomic snapshot publish')
+console.log('Admin Imports shows crawl + finalization progress and only complete snapshots become visible')
 console.log('npm build/smoke + production build run independent jobs in parallel; Wrangler deploy is sequential')
