@@ -12,6 +12,7 @@ const adminStatus = await readFile(new URL('../apps/admin/src/TufCronStatus.tsx'
 const reconciliation = await readFile(new URL('../apps/admin/src/TufReconciliation.tsx', import.meta.url), 'utf8')
 const wrangler = await readFile(new URL('../apps/api/wrangler.jsonc', import.meta.url), 'utf8')
 const productionConfig = await readFile(new URL('./production-config.mjs', import.meta.url), 'utf8')
+const localProductionRunner = await readFile(new URL('./tuf-production-local.ts', import.meta.url), 'utf8')
 const devApi = await readFile(new URL('./dev-api.mjs', import.meta.url), 'utf8')
 const packageJson = await readFile(new URL('../package.json', import.meta.url), 'utf8')
 const deploy = await readFile(new URL('./deploy-production.mjs', import.meta.url), 'utf8')
@@ -91,6 +92,19 @@ for (const invariant of ['/admin/imports/tuf/cron-status', 'TUF Cron Status', 'C
 }
 if (!reconciliation.includes('<TufCronStatus/>')) throw new Error('TUF reconciliation must show Cron status')
 
+for (const invariant of [
+  "import { runScheduledTufStep } from '../apps/api/src/importers/tuf-scheduled.ts'",
+  "executionSource: 'LOCAL_PRODUCTION_RUNNER'",
+  'config.databaseUrl',
+  'connectionString: config.databaseUrl',
+  "result.status === 'IMPORTED'",
+  "result.status === 'BUSY'",
+]) {
+  if (!localProductionRunner.includes(invariant)) throw new Error(`local production TUF runner missing: ${invariant}`)
+}
+if (!packageJson.includes('"production:tuf-local": "tsx scripts/tuf-production-local.ts"')) throw new Error('local production TUF npm command missing')
+if (!packageJson.includes('"tsx":')) throw new Error('tsx dependency for local production TUF runner missing')
+
 for (const forbidden of ['canonical_ratings', 'difficulty_references']) {
   if (scheduled.includes(forbidden)) throw new Error(`scheduled crawler must stay outside canonical data: ${forbidden}`)
   if (importer.includes(forbidden)) throw new Error(`TUF importer must stay outside canonical data: ${forbidden}`)
@@ -119,5 +133,6 @@ if (deploy.includes("runParallel('Deploy'")) throw new Error('production deploy 
 
 console.log('TUF CRON STATIC SMOKE PASSED')
 console.log('every 15 minutes -> crawl 1000 levels/tick -> finalize 1000 levels/tick -> atomic snapshot publish')
+console.log('production:tuf-local can run the same locked crawl/finalize state machine on the operator PC')
 console.log('Admin Imports shows crawl + finalization progress and only complete snapshots become visible')
 console.log('npm build/smoke + production build run independent jobs in parallel; Wrangler deploy is sequential')
