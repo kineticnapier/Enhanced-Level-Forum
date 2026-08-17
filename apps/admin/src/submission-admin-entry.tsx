@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { I18nProvider, LanguageSwitch, useI18n } from './i18n'
 import { SubmissionReview } from './SubmissionReview'
 import './styles.css'
+import './submission-admin.css'
 
 function SubmissionAdminOverlay(){
   const { locale }=useI18n()
