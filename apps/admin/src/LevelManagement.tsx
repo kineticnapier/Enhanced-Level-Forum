@@ -3,6 +3,10 @@ import type { Family, LevelDetail, LevelListItem, RatingQueueItem } from '@elf/s
 import { api } from './api'
 import { useI18n } from './i18n'
 
+type VariantKind = 'ORIGINAL'|'NERFED'|'BUFFED'|'KEYLIMIT'|'NO_KEY_LIMIT'|'CUSTOM'
+type VariantVersion = { id:string; variantId:string; label:string; sha256:string|null; downloadUrl:string|null; videoUrl:string|null; notes:string|null; currentRating:{family:Family;tier:number;confidence:number|null}|null }
+type LevelVariant = { id:string; levelId:string; name:string; kind:VariantKind; keyLimit:number|null; notes:string|null; isPrimary:boolean; currentVersionId:string|null; currentRating:{family:Family;tier:number;confidence:number|null}|null; versions:VariantVersion[] }
+
 const labels = {
   ja: {
     title: '譜面', create: '譜面を新規登録', existing: '登録済み', select: '編集する譜面を選択してください。', saved: '保存しました',
@@ -12,7 +16,9 @@ const labels = {
     publishRerate: '確定難易度を変更', ratingRule: '確定難易度は P/G/U の整数段階のみです。', confidence: '確信度 0..1', reason: '変更理由', publish: '難易度を確定',
     queueTitle: '査定募集', queueHelp: '未評価を全部キューに入れず、この現行版だけを明示的に募集します。通常は2票、意見が割れた場合は最大3票でReview Readyになります。',
     queueOpen: '査定募集を開始', queueClose: '募集を終了', queueStatusOpen: '募集中', queueStatusReady: 'Review Ready', queueVotes: '票', queueCandidate: '候補',
-    addVersion: '新しいバージョンを追加', addCurrent: '追加して現行版にする', versions: 'バージョン一覧', current: '現在', noSha: 'SHAなし', downloadLink: '配布', videoLink: '動画',
+    addVersion: 'Primary Variantに新しいVersionを追加', addCurrent: '追加して現行版にする', versions: '全Version（互換表示）', current: '現在', noSha: 'SHAなし', downloadLink: '配布', videoLink: '動画',
+    variants:'Variants', variantHelp:'Original / Nerfed / Keylimit など、ゲームプレイ形が異なるものを分けます。同じVariant内のoffsync修正などはVersionです。',
+    variantName:'Variant名', variantKind:'種類', keyLimit:'キー上限', addVariant:'Variantを追加', primary:'Primary', makePrimary:'Primaryにする', variantNotes:'Variant補足（任意）', variantVersion:'このVariantにVersionを追加',
   },
   en: {
     title: 'Levels', create: 'Register level', existing: 'Registered', select: 'Select a level to edit.', saved: 'Saved',
@@ -22,7 +28,9 @@ const labels = {
     publishRerate: 'Change canonical rating', ratingRule: 'Canonical ratings are integer P/G/U tiers.', confidence: 'confidence 0..1', reason: 'Reason', publish: 'Publish rating',
     queueTitle: 'Rating round', queueHelp: 'Only this current Version is explicitly opened; Unrated levels are not automatically queued. Two close ratings become Review Ready; disagreement requests up to three.',
     queueOpen: 'Open rating round', queueClose: 'Close round', queueStatusOpen: 'Open', queueStatusReady: 'Review Ready', queueVotes: 'votes', queueCandidate: 'Candidate',
-    addVersion: 'Add version', addCurrent: 'Add & make current', versions: 'Versions', current: 'current', noSha: 'no SHA', downloadLink: 'Download', videoLink: 'Video',
+    addVersion: 'Add Version to primary Variant', addCurrent: 'Add & make current', versions: 'All Versions (compatibility view)', current: 'current', noSha: 'no SHA', downloadLink: 'Download', videoLink: 'Video',
+    variants:'Variants', variantHelp:'Use Variants for distinct gameplay forms such as Original, Nerfed, or Keylimit. Off-sync fixes and similar revisions stay as Versions inside the same Variant.',
+    variantName:'Variant name', variantKind:'Kind', keyLimit:'Key limit', addVariant:'Add Variant', primary:'Primary', makePrimary:'Make primary', variantNotes:'Variant notes (optional)', variantVersion:'Add Version to this Variant',
   },
 } as const
 
@@ -86,14 +94,23 @@ function LevelEditor({level,onChanged,onError}:{level:LevelDetail;onChanged:()=>
   const [family,setFamily]=useState<Family>(level.currentRating?.family??'G');const [tier,setTier]=useState(level.currentRating?.tier??1);const [confidence,setConfidence]=useState(level.currentRating?.confidence??'');const [reason,setReason]=useState('')
   const [version,setVersion]=useState('');const [download,setDownload]=useState('');const [video,setVideo]=useState('');const [sha,setSha]=useState('')
   const [queue,setQueue]=useState<RatingQueueItem|null>(null)
+  const [variants,setVariants]=useState<LevelVariant[]>([])
+  const [variantName,setVariantName]=useState('');const [variantKind,setVariantKind]=useState<VariantKind>('NERFED');const [keyLimit,setKeyLimit]=useState('');const [variantNotes,setVariantNotes]=useState('')
   const loadQueue=async()=>{if(!currentVersion){setQueue(null);return}const x=await api<{items:RatingQueueItem[]}>('/admin/rating-queue');setQueue(x.items.find((item)=>item.levelVersionId===currentVersion.id)??null)}
+  const loadVariants=async()=>{const x=await api<{variants:LevelVariant[]}>(`/levels/${level.id}/variants`);setVariants(x.variants)}
   useEffect(()=>{setSong(level.song);setArtist(level.artist);setCreator(level.creator);setEffecter(level.effecter??'')},[level.song,level.artist,level.creator,level.effecter])
-  useEffect(()=>{void loadQueue()},[level.id,currentVersion?.id])
-  const run=async(action:()=>Promise<unknown>)=>{onError('');try{await action();await loadQueue();onChanged()}catch(e){onError(e instanceof Error?e.message:String(e))}}
+  useEffect(()=>{void loadQueue();void loadVariants()},[level.id,currentVersion?.id])
+  const run=async(action:()=>Promise<unknown>)=>{onError('');try{await action();await Promise.all([loadQueue(),loadVariants()]);onChanged()}catch(e){onError(e instanceof Error?e.message:String(e))}}
+  const addVariant=()=>run(async()=>{await api(`/admin/levels/${level.id}/variants`,{method:'POST',body:JSON.stringify({name:variantName,kind:variantKind,keyLimit:variantKind==='KEYLIMIT'?Number(keyLimit):null,notes:variantNotes||null})});setVariantName('');setKeyLimit('');setVariantNotes('')})
   return <div className="panel">
     <div className="title-row"><div><p className="eyebrow">{level.artist}</p><h2>{level.song}</h2><p>{level.creator}{level.effecter?` · FX: ${level.effecter}`:''}</p></div><b className="big-rating">{level.currentRating?`${level.currentRating.family}${level.currentRating.tier}`:l.unrated}</b></div>
     <h3>{l.metadata}</h3>
     <div className="form"><input placeholder={l.song} value={song} onChange={(e)=>setSong(e.target.value)}/><input placeholder={l.artist} value={artist} onChange={(e)=>setArtist(e.target.value)}/><input placeholder={l.creator} value={creator} onChange={(e)=>setCreator(e.target.value)}/><input placeholder={l.effecter} value={effecter} onChange={(e)=>setEffecter(e.target.value)}/><button className="secondary" disabled={!song.trim()||!artist.trim()||!creator.trim()} onClick={()=>void run(()=>api(`/admin/levels/${level.id}`,{method:'PATCH',body:JSON.stringify({song,artist,creator,effecter:effecter||null})}))}>{l.saveMetadata}</button></div>
+
+    <h3>{l.variants}</h3><p className="muted">{l.variantHelp}</p>
+    <div className="form"><div className="grid three"><input placeholder={`${l.variantName} *`} value={variantName} onChange={(e)=>setVariantName(e.target.value)}/><select value={variantKind} onChange={(e)=>setVariantKind(e.target.value as VariantKind)}>{(['ORIGINAL','NERFED','BUFFED','KEYLIMIT','NO_KEY_LIMIT','CUSTOM'] as VariantKind[]).map((kind)=><option key={kind}>{kind}</option>)}</select><input type="number" min="1" disabled={variantKind!=='KEYLIMIT'} placeholder={l.keyLimit} value={keyLimit} onChange={(e)=>setKeyLimit(e.target.value)}/></div><input placeholder={l.variantNotes} value={variantNotes} onChange={(e)=>setVariantNotes(e.target.value)}/><button className="secondary" disabled={!variantName.trim()||(variantKind==='KEYLIMIT'&&(!keyLimit||Number(keyLimit)<1))} onClick={()=>void addVariant()}>{l.addVariant}</button></div>
+    <div className="variant-admin-list">{variants.map((variant)=><VariantEditor key={variant.id} levelId={level.id} variant={variant} onRun={run} labels={l}/>)}</div>
+
     <h3>{l.queueTitle}</h3><p className="muted">{l.queueHelp}</p>
     {queue?<div className="row"><strong>{queue.status==='REVIEW_READY'?l.queueStatusReady:l.queueStatusOpen}</strong><span>{queue.voteCount}/{queue.minVotes} {l.queueVotes}</span>{queue.review?.candidate&&<span>{l.queueCandidate}: {queue.review.candidate.family}{queue.review.candidate.tier}</span>}<button className="tiny danger" onClick={()=>void run(()=>api(`/admin/rating-queue/${queue.id}`,{method:'PATCH',body:JSON.stringify({status:'CLOSED'})}))}>{l.queueClose}</button></div>:<button className="secondary" disabled={!currentVersion} onClick={()=>void run(()=>api('/admin/rating-queue',{method:'POST',body:JSON.stringify({levelId:level.id,minVotes:2,maxVotes:3})}))}>{l.queueOpen}</button>}
     <h3>{l.publishRerate}</h3><p className="muted">{l.ratingRule}</p>
@@ -102,5 +119,15 @@ function LevelEditor({level,onChanged,onError}:{level:LevelDetail;onChanged:()=>
     <h3>{l.addVersion}</h3>
     <div className="form"><input placeholder={`${l.version} *`} value={version} onChange={(e)=>setVersion(e.target.value)}/><input placeholder={l.download} value={download} onChange={(e)=>setDownload(e.target.value)}/><input placeholder={l.video} value={video} onChange={(e)=>setVideo(e.target.value)}/><input placeholder={l.sha} value={sha} onChange={(e)=>setSha(e.target.value)}/><button className="secondary" disabled={!version.trim()} onClick={()=>void run(async()=>{await api(`/admin/levels/${level.id}/versions`,{method:'POST',body:JSON.stringify({label:version,downloadUrl:download||null,videoUrl:video||null,sha256:sha||null,makeCurrent:true})});setVersion('');setDownload('');setVideo('');setSha('')})}>{l.addCurrent}</button></div>
     <h3>{l.versions}</h3>{level.versions.map((v)=><div className="row" key={v.id}><strong>{v.label}</strong>{v.id===level.currentVersionId&&<span className="pill">{l.current}</span>}<code>{v.sha256??l.noSha}</code><span>{v.downloadUrl&&<a href={v.downloadUrl} target="_blank" rel="noreferrer">{l.downloadLink}</a>}{v.downloadUrl&&v.videoUrl?' · ':''}{v.videoUrl&&<a href={v.videoUrl} target="_blank" rel="noreferrer">{l.videoLink}</a>}</span></div>)}
+  </div>
+}
+
+function VariantEditor({levelId,variant,onRun,labels:l}:{levelId:string;variant:LevelVariant;onRun:(action:()=>Promise<unknown>)=>Promise<void>;labels:(typeof labels)['ja']|(typeof labels)['en']}) {
+  const [label,setLabel]=useState('');const [download,setDownload]=useState('');const [video,setVideo]=useState('');const [sha,setSha]=useState('')
+  return <div className="variant-admin-card">
+    <div className="title-row"><div><strong>{variant.name}</strong><small>{variant.kind}{variant.keyLimit?` · ${variant.keyLimit}K`:''}</small></div><div>{variant.isPrimary?<span className="pill">{l.primary}</span>:<button className="tiny" onClick={()=>void onRun(()=>api(`/admin/levels/${levelId}/variants/${variant.id}`,{method:'PATCH',body:JSON.stringify({isPrimary:true})}))}>{l.makePrimary}</button>} {variant.currentRating&&<b>{variant.currentRating.family}{variant.currentRating.tier}</b>}</div></div>
+    {variant.notes&&<p className="muted">{variant.notes}</p>}
+    <div className="variant-version-list">{variant.versions.map((version)=><div className="row" key={version.id}><strong>{version.label}</strong>{version.id===variant.currentVersionId&&<span className="pill">{l.current}</span>}<code>{version.sha256??l.noSha}</code>{version.currentRating&&<span>{version.currentRating.family}{version.currentRating.tier}</span>}</div>)}</div>
+    <details><summary>{l.variantVersion}</summary><div className="form"><input placeholder={`${l.version} *`} value={label} onChange={(e)=>setLabel(e.target.value)}/><input placeholder={l.download} value={download} onChange={(e)=>setDownload(e.target.value)}/><input placeholder={l.video} value={video} onChange={(e)=>setVideo(e.target.value)}/><input placeholder={l.sha} value={sha} onChange={(e)=>setSha(e.target.value)}/><button className="secondary" disabled={!label.trim()} onClick={()=>void onRun(async()=>{await api(`/admin/levels/${levelId}/variants/${variant.id}/versions`,{method:'POST',body:JSON.stringify({label,downloadUrl:download||null,videoUrl:video||null,sha256:sha||null,makeCurrent:true})});setLabel('');setDownload('');setVideo('');setSha('')})}>{l.addCurrent}</button></div></details>
   </div>
 }
