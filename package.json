@@ -23,6 +23,7 @@
     "production:deploy": "node scripts/deploy-production.mjs",
     "production:smoke": "node scripts/smoke-production.mjs",
     "production:reset-admin": "node scripts/reset-production-admin.mjs",
+    "production:tuf-local": "tsx scripts/tuf-production-local.ts",
     "db:migrate": "node scripts/apply-migrations.mjs",
     "auth:create-admin": "node scripts/create-admin.mjs",
     "import:tuf": "node scripts/import-tuf.mjs",
@@ -46,6 +47,7 @@
     "test:e2e:production-auth": "node scripts/e2e-production-auth.mjs"
   },
   "devDependencies": {
+    "tsx": "^4.20.5",
     "typescript": "^5.8.0"
   },
   "dependencies": {
