@@ -468,7 +468,8 @@ async function publishSnapshot(db: DbClient, state: CrawlState, metadata: Record
     }
     await db.query(
       `INSERT INTO import_issues(snapshot_id,source,severity,kind,external_id,linked_level_id,linked_level_version_id,details)
-       SELECT $2,'TUF','ERROR','SHA_RATING_CONFLICT',NULL,min(linked_level_id),min(linked_level_version_id),
+       SELECT $2,'TUF','ERROR','SHA_RATING_CONFLICT',NULL,
+              min(linked_level_id::text)::uuid,min(linked_level_version_id::text)::uuid,
               jsonb_build_object('sha256',sha256,'difficulties',jsonb_agg(DISTINCT difficulty_label))
        FROM tuf_finalize_levels
        WHERE crawl_id=$1 AND sha256 IS NOT NULL AND difficulty_label IS NOT NULL
