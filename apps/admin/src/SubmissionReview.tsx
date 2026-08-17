@@ -9,6 +9,9 @@ type Submission = {
   artist: string
   creator: string
   effecter: string | null
+  variantName: string
+  variantKind: string
+  variantKeyLimit: number | null
   versionLabel: string
   sha256: string | null
   downloadUrl: string | null
@@ -26,9 +29,9 @@ export function SubmissionReview() {
   const { locale } = useI18n()
   const ja = locale === 'ja'
   const copy = ja ? {
-    eyebrow:'LEVEL SUBMISSIONS', title:'投稿審査', pending:'保留中', all:'すべて', submitter:'投稿者', version:'版', sha:'SHA-256', links:'リンク', notes:'投稿メモ', reviewNote:'審査メモ', approve:'承認してLevelを作成', reject:'却下', rejectNeed:'却下時は理由を入力してください。', noRows:'対象の投稿はありません。', loading:'読み込み中…', failed:'読み込みに失敗しました', approved:'承認しました。Rating Queueには自動投入されません。', rejected:'却下しました。', download:'配布', video:'動画', created:'作成されたLevel',
+    eyebrow:'LEVEL SUBMISSIONS', title:'投稿審査', pending:'保留中', all:'すべて', submitter:'投稿者', variant:'Variant', version:'Version', sha:'SHA-256', links:'リンク', notes:'投稿メモ', reviewNote:'審査メモ', approve:'承認してLevelを作成', reject:'却下', rejectNeed:'却下時は理由を入力してください。', noRows:'対象の投稿はありません。', loading:'読み込み中…', failed:'読み込みに失敗しました', approved:'承認しました。Rating Queueには自動投入されません。', rejected:'却下しました。', download:'配布', video:'動画', created:'作成されたLevel',
   } : {
-    eyebrow:'LEVEL SUBMISSIONS', title:'Submission review', pending:'Pending', all:'All', submitter:'Submitter', version:'Version', sha:'SHA-256', links:'Links', notes:'Submission notes', reviewNote:'Review note', approve:'Approve & create Level', reject:'Reject', rejectNeed:'A review note is required when rejecting.', noRows:'No matching submissions.', loading:'Loading…', failed:'Failed to load submissions', approved:'Approved. The Level was not automatically added to the Rating Queue.', rejected:'Rejected.', download:'Download', video:'Video', created:'Created Level',
+    eyebrow:'LEVEL SUBMISSIONS', title:'Submission review', pending:'Pending', all:'All', submitter:'Submitter', variant:'Variant', version:'Version', sha:'SHA-256', links:'Links', notes:'Submission notes', reviewNote:'Review note', approve:'Approve & create Level', reject:'Reject', rejectNeed:'A review note is required when rejecting.', noRows:'No matching submissions.', loading:'Loading…', failed:'Failed to load submissions', approved:'Approved. The Level was not automatically added to the Rating Queue.', rejected:'Rejected.', download:'Download', video:'Video', created:'Created Level',
   }
   const [status,setStatus]=useState<'PENDING'|'ALL'>('PENDING')
   const [rows,setRows]=useState<Submission[]>([])
@@ -48,7 +51,7 @@ export function SubmissionReview() {
     {error&&<p className="error">{error}</p>}{message&&<p className="notice">{message}</p>}
     <div className="cards">{rows.map((row)=><article className="panel" key={row.id}>
       <div className="title-row"><div><p className="eyebrow">{row.artist}</p><h2>{row.song}</h2><p>{row.creator}{row.effecter?` · FX: ${row.effecter}`:''}</p></div><span className={`status ${row.status.toLowerCase()}`}>{row.status}</span></div>
-      <div className="grid"><p><b>{copy.submitter}</b><br/>{row.submitterName??'—'}</p><p><b>{copy.version}</b><br/>{row.versionLabel}</p></div>
+      <div className="grid"><p><b>{copy.submitter}</b><br/>{row.submitterName??'—'}</p><p><b>{copy.variant}</b><br/>{row.variantName} <small>({row.variantKind}{row.variantKeyLimit?`, ${row.variantKeyLimit}K`:''})</small></p><p><b>{copy.version}</b><br/>{row.versionLabel}</p></div>
       <p><b>{copy.sha}</b><br/><code>{row.sha256??'—'}</code></p>
       {(row.downloadUrl||row.videoUrl)&&<p><b>{copy.links}</b><br/>{row.downloadUrl&&<a href={row.downloadUrl} target="_blank" rel="noreferrer">{copy.download}</a>}{row.downloadUrl&&row.videoUrl?' · ':''}{row.videoUrl&&<a href={row.videoUrl} target="_blank" rel="noreferrer">{copy.video}</a>}</p>}
       {row.notes&&<p><b>{copy.notes}</b><br/>{row.notes}</p>}
