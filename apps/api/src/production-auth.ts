@@ -12,6 +12,9 @@ const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 const LOGIN_WINDOW_SQL = "interval '15 minutes'"
 const LOGIN_EMAIL_FAILURE_LIMIT = 8
 const LOGIN_IP_FAILURE_LIMIT = 30
+const REGISTRATION_WINDOW_SQL = "interval '1 hour'"
+const REGISTRATION_EMAIL_LIMIT = 3
+const REGISTRATION_IP_LIMIT = 5
 const SESSION_SECONDS = 14 * 24 * 60 * 60
 const DUMMY_PASSWORD_HASH = 'pbkdf2-sha256$210000$RUxGLURVTU1ZLVNBTFQhIQ$k0f4GOhibmKUTeEAo4q9tHGAL9zp-0Yj_FYfbcHYi5E'
 
@@ -82,6 +85,28 @@ async function recordLoginAttempt(db: DbClient, emailHash: string, ipHash: strin
   await db.query(`DELETE FROM auth_login_attempts WHERE attempted_at < now() - interval '24 hours'`)
 }
 
+async function registrationIsRateLimited(db: DbClient, emailHash: string, ipHash: string): Promise<boolean> {
+  const result = await db.query(
+    `SELECT
+       count(*) FILTER (WHERE email_hash=$1)::int AS email_attempts,
+       count(*) FILTER (WHERE ip_hash=$2)::int AS ip_attempts
+     FROM auth_registration_attempts
+     WHERE attempted_at > now() - ${REGISTRATION_WINDOW_SQL}`,
+    [emailHash, ipHash],
+  )
+  const row = result.rows[0] ?? {}
+  return Number(row.email_attempts ?? 0) >= REGISTRATION_EMAIL_LIMIT
+    || Number(row.ip_attempts ?? 0) >= REGISTRATION_IP_LIMIT
+}
+
+async function recordRegistrationAttempt(db: DbClient, emailHash: string, ipHash: string, success: boolean) {
+  await db.query(
+    `INSERT INTO auth_registration_attempts(email_hash,ip_hash,success) VALUES ($1,$2,$3)`,
+    [emailHash, ipHash, success],
+  )
+  await db.query(`DELETE FROM auth_registration_attempts WHERE attempted_at < now() - interval '24 hours'`)
+}
+
 function publicUser(row: any): SessionUser {
   return {
     id: row.id,
@@ -138,6 +163,72 @@ export function registerProductionAuth(app: Hono<AppBindings>) {
     c.header('X-Frame-Options', 'DENY')
     if (path.startsWith('/api/auth/')) c.header('Cache-Control', 'no-store')
     if (isProduction(c.env)) c.header('Strict-Transport-Security', 'max-age=31536000')
+  })
+
+  app.post('/api/auth/register', async (c) => {
+    const body = await c.req.json<{ email?: string; displayName?: string; password?: string }>()
+      .catch((): { email?: string; displayName?: string; password?: string } => ({}))
+    const email = normalizedEmail(body.email)
+    const displayName = body.displayName?.trim() ?? ''
+    const password = body.password ?? ''
+    if (!validEmail(email) || !displayName || displayName.length > 80) {
+      return c.json({ error: 'Valid email and displayName (1..80) are required.' }, 400)
+    }
+    const policyError = passwordPolicyError(password)
+    if (policyError) return c.json({ error: policyError }, 400)
+
+    const hashes = await rateLimitHashes(c.env, email, clientIp(c))
+    if (!hashes) return c.json({ error: 'Production authentication is not configured: AUTH_RATE_LIMIT_SALT is missing.' }, 503)
+
+    const result = await withDb(c.env, async (db) => {
+      if (await registrationIsRateLimited(db, hashes.emailHash, hashes.ipHash)) return { kind: 'limited' as const }
+
+      const existing = await db.query(`SELECT id FROM users WHERE lower(email)=$1`, [email])
+      if (existing.rowCount) {
+        await recordRegistrationAttempt(db, hashes.emailHash, hashes.ipHash, false)
+        return { kind: 'exists' as const }
+      }
+
+      const passwordHash = await hashPassword(password)
+      try {
+        return await inTransaction(db, async () => {
+          const created = await db.query(
+            `INSERT INTO users(email,display_name,role,password_hash,is_active,password_changed_at,last_login_at)
+             VALUES ($1,$2,'VIEWER',$3,true,now(),now())
+             RETURNING id,email,display_name,role,is_active`,
+            [email, displayName, passwordHash],
+          )
+          const row = created.rows[0]
+          const token = randomToken()
+          const tokenHash = await sha256Hex(token)
+          await db.query(
+            `INSERT INTO sessions(user_id,token_hash,expires_at)
+             VALUES ($1,$2,now()+interval '14 days')`,
+            [row.id, tokenHash],
+          )
+          await audit(db, row.id, 'SELF_REGISTER', 'user', row.id, { role: 'VIEWER' })
+          return { kind: 'ok' as const, token, user: publicUser(row) }
+        })
+      } catch (error: any) {
+        if (error?.code === '23505') {
+          await recordRegistrationAttempt(db, hashes.emailHash, hashes.ipHash, false)
+          return { kind: 'exists' as const }
+        }
+        throw error
+      }
+    })
+
+    if (result.kind === 'limited') {
+      c.header('Retry-After', '3600')
+      return c.json({ error: 'Too many registration attempts. Try again later.' }, 429)
+    }
+    if (result.kind === 'exists') return c.json({ error: 'An account with that email already exists.' }, 409)
+
+    await withDb(c.env, (db) => recordRegistrationAttempt(db, hashes.emailHash, hashes.ipHash, true)).catch((error) => {
+      console.error('[auth] failed to record successful registration attempt', error)
+    })
+    c.header('Set-Cookie', sessionCookie(c.env, result.token, SESSION_SECONDS))
+    return c.json({ user: result.user }, 201)
   })
 
   // Supersedes the old development bootstrap login route without changing the
