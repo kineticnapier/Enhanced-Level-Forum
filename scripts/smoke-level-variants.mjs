@@ -35,6 +35,11 @@ if (!entry.includes("import { registerLevelVariantRoutes } from './level-variant
 if (!entry.includes('registerLevelVariantRoutes(app)')) throw new Error('Variant routes are not registered')
 if (entry.indexOf('registerLevelVariantRoutes(app)') > entry.indexOf("app.route('/', coreApp)")) throw new Error('Variant routes must be registered before legacy core routes')
 
+const admin = await readFile(new URL('../apps/admin/src/LevelManagement.tsx', import.meta.url), 'utf8')
+for (const invariant of ['VariantKind', 'NERFED', 'KEYLIMIT', 'NO_KEY_LIMIT', 'Variantを追加', '/variants/${variant.id}/versions', 'isPrimary:true']) {
+  if (!admin.includes(invariant)) throw new Error(`Variant admin UI missing: ${invariant}`)
+}
+
 const docs = await readFile(new URL('../docs/LEVEL_VARIANTS.md', import.meta.url), 'utf8')
 for (const invariant of ['Level\n└─ Variant\n   └─ Version', 'Nerfed', '10K', 'SHA-256', 'Rating and clears']) {
   if (!docs.includes(invariant)) throw new Error(`Variant semantics documentation missing: ${invariant}`)
