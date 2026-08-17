@@ -1,0 +1,98 @@
+BEGIN;
+
+CREATE TABLE IF NOT EXISTS level_variants (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  level_id uuid NOT NULL REFERENCES levels(id) ON DELETE CASCADE,
+  name text NOT NULL,
+  kind text NOT NULL DEFAULT 'ORIGINAL' CHECK (kind IN ('ORIGINAL','NERFED','BUFFED','KEYLIMIT','NO_KEY_LIMIT','CUSTOM')),
+  key_limit integer NULL CHECK (key_limit IS NULL OR key_limit >= 1),
+  notes text NULL,
+  is_primary boolean NOT NULL DEFAULT false,
+  current_version_id uuid NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS level_variants_name_idx
+  ON level_variants(level_id, lower(name));
+CREATE UNIQUE INDEX IF NOT EXISTS level_variants_primary_idx
+  ON level_variants(level_id) WHERE is_primary;
+
+ALTER TABLE level_versions
+  ADD COLUMN IF NOT EXISTS variant_id uuid NULL;
+
+INSERT INTO level_variants(level_id,name,kind,is_primary,current_version_id)
+SELECT l.id,'Original','ORIGINAL',true,l.current_version_id
+FROM levels l
+WHERE NOT EXISTS (SELECT 1 FROM level_variants v WHERE v.level_id=l.id);
+
+UPDATE level_versions lv
+SET variant_id=v.id
+FROM level_variants v
+WHERE v.level_id=lv.level_id AND v.is_primary AND lv.variant_id IS NULL;
+
+ALTER TABLE level_versions
+  ALTER COLUMN variant_id SET NOT NULL;
+
+ALTER TABLE level_versions
+  DROP CONSTRAINT IF EXISTS level_versions_variant_fk;
+ALTER TABLE level_versions
+  ADD CONSTRAINT level_versions_variant_fk
+  FOREIGN KEY(variant_id) REFERENCES level_variants(id) ON DELETE CASCADE;
+
+ALTER TABLE level_variants
+  DROP CONSTRAINT IF EXISTS level_variants_current_version_fk;
+ALTER TABLE level_variants
+  ADD CONSTRAINT level_variants_current_version_fk
+  FOREIGN KEY(current_version_id) REFERENCES level_versions(id)
+  DEFERRABLE INITIALLY DEFERRED;
+
+CREATE INDEX IF NOT EXISTS level_versions_variant_created_idx
+  ON level_versions(variant_id, created_at DESC);
+
+CREATE OR REPLACE FUNCTION elf_assign_primary_variant()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+  target_variant uuid;
+BEGIN
+  IF NEW.variant_id IS NOT NULL THEN
+    RETURN NEW;
+  END IF;
+
+  SELECT id INTO target_variant
+  FROM level_variants
+  WHERE level_id=NEW.level_id AND is_primary
+  LIMIT 1;
+
+  IF target_variant IS NULL THEN
+    INSERT INTO level_variants(level_id,name,kind,is_primary)
+    VALUES (NEW.level_id,'Original','ORIGINAL',true)
+    RETURNING id INTO target_variant;
+  END IF;
+
+  NEW.variant_id := target_variant;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS level_versions_assign_primary_variant ON level_versions;
+CREATE TRIGGER level_versions_assign_primary_variant
+BEFORE INSERT ON level_versions
+FOR EACH ROW EXECUTE FUNCTION elf_assign_primary_variant();
+
+CREATE OR REPLACE FUNCTION elf_set_variant_first_version()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  UPDATE level_variants
+  SET current_version_id=COALESCE(current_version_id, NEW.id), updated_at=now()
+  WHERE id=NEW.variant_id;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS level_versions_set_variant_first_version ON level_versions;
+CREATE TRIGGER level_versions_set_variant_first_version
+AFTER INSERT ON level_versions
+FOR EACH ROW EXECUTE FUNCTION elf_set_variant_first_version();
+
+COMMIT;
