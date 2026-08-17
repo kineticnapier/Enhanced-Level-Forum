@@ -10,6 +10,7 @@ import { registerProductionAuth } from './production-auth'
 import { registerPublicRoutes } from './public'
 import { registerRatingQueueRoutes } from './rating-queue'
 import { createLevelFromTufObservation, linkTufObservation, listTufUnlinked, TufReconciliationError } from './reconciliation/tuf'
+import { registerSubmissionRoutes } from './submissions'
 import { registerTufCronStatusRoutes } from './tuf-cron-status'
 
 type TufImportBody = { rawData?: TufRawSnapshot; sourceVersion?: string | null }
@@ -37,6 +38,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-
 // removing old compatibility APIs.
 const app = new Hono<AppBindings>()
 registerProductionAuth(app)
+registerSubmissionRoutes(app)
 registerLevelMetadataRoutes(app)
 registerRatingQueueRoutes(app)
 registerTufCronStatusRoutes(app)
