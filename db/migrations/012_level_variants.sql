@@ -21,6 +21,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS level_variants_primary_idx
 ALTER TABLE level_versions
   ADD COLUMN IF NOT EXISTS variant_id uuid NULL;
 
+-- Every existing Level becomes one work page with one primary Original Variant.
+-- Existing Versions keep their ids, ratings, votes, references and external links.
 INSERT INTO level_variants(level_id,name,kind,is_primary,current_version_id)
 SELECT l.id,'Original','ORIGINAL',true,l.current_version_id
 FROM levels l
@@ -50,12 +52,19 @@ ALTER TABLE level_variants
 CREATE INDEX IF NOT EXISTS level_versions_variant_created_idx
   ON level_versions(variant_id, created_at DESC);
 
+-- Compatibility bridge: old code that inserts a Version with only level_id
+-- transparently attaches it to the Level's primary Variant.
 CREATE OR REPLACE FUNCTION elf_assign_primary_variant()
 RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
   target_variant uuid;
+  target_level uuid;
 BEGIN
   IF NEW.variant_id IS NOT NULL THEN
+    SELECT level_id INTO target_level FROM level_variants WHERE id=NEW.variant_id;
+    IF target_level IS NULL OR target_level <> NEW.level_id THEN
+      RAISE EXCEPTION 'level_version variant_id must belong to level_id';
+    END IF;
     RETURN NEW;
   END IF;
 
@@ -77,7 +86,7 @@ $$;
 
 DROP TRIGGER IF EXISTS level_versions_assign_primary_variant ON level_versions;
 CREATE TRIGGER level_versions_assign_primary_variant
-BEFORE INSERT ON level_versions
+BEFORE INSERT OR UPDATE OF level_id,variant_id ON level_versions
 FOR EACH ROW EXECUTE FUNCTION elf_assign_primary_variant();
 
 CREATE OR REPLACE FUNCTION elf_set_variant_first_version()
