@@ -40,7 +40,7 @@ for (const invariant of [
   'beginFinalize',
   'finalizeLevelChunk',
   'publishSnapshot',
-  "phase: 'PUBLISH'",
+  "state.phase = 'PUBLISH'",
   "status: 'FINALIZING'",
   'pg_try_advisory_lock',
   "'TUF_SCHEDULED_IMPORT'",
