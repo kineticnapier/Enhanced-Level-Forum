@@ -396,16 +396,18 @@ function buildReferenceRows(references: unknown, links: Map<string, { levelId: s
 
 async function publishSnapshot(db: DbClient, state: CrawlState, metadata: Record<string, unknown>): Promise<TufScheduledStepResult> {
   if (state.observedTotal === null || !Array.isArray(state.referencesRaw)) throw new Error('finalize state is incomplete')
+  const observedTotal = state.observedTotal
+  const referencesRaw = state.referencesRaw
   return inTransaction(db, async () => {
     const staged = await db.query(`SELECT count(*)::int AS count FROM tuf_finalize_levels WHERE crawl_id=$1`, [state.crawlId])
     const stagedCount = Number(staged.rows[0]?.count ?? 0)
-    if (stagedCount > state.observedTotal) throw new Error(`finalized level count exceeds crawl total (${stagedCount}/${state.observedTotal})`)
+    if (stagedCount > observedTotal) throw new Error(`finalized level count exceeds crawl total (${stagedCount}/${observedTotal})`)
 
     const sourceVersion = `v2@${new Date().toISOString()}`
     const snapshotResult = await db.query(
       `INSERT INTO import_snapshots(source,source_version,raw_data,imported_by)
        VALUES ('TUF',$1,$2::jsonb,NULL) RETURNING id,source,source_version,imported_at`,
-      [sourceVersion, JSON.stringify({ kind: 'scheduled-incremental', crawlId: state.crawlId, apiBase: TUF_API_BASE, levelTotal: state.observedTotal })],
+      [sourceVersion, JSON.stringify({ kind: 'scheduled-incremental', crawlId: state.crawlId, apiBase: TUF_API_BASE, levelTotal: observedTotal })],
     )
     const snapshot = snapshotResult.rows[0]
 
@@ -425,7 +427,7 @@ async function publishSnapshot(db: DbClient, state: CrawlState, metadata: Record
     )
 
     const refIds = new Set<string>()
-    for (const groupValue of state.referencesRaw) {
+    for (const groupValue of referencesRaw) {
       const group = record(groupValue)
       if (!group || !Array.isArray(group.levels)) continue
       for (const value of group.levels) {
@@ -438,7 +440,7 @@ async function publishSnapshot(db: DbClient, state: CrawlState, metadata: Record
       : { rows: [] as any[] }
     const links = new Map<string, { levelId: string | null; levelVersionId: string | null }>()
     for (const row of linkRows.rows) links.set(String(row.external_id), { levelId: row.linked_level_id ?? null, levelVersionId: row.linked_level_version_id ?? null })
-    const refs = buildReferenceRows(state.referencesRaw, links)
+    const refs = buildReferenceRows(referencesRaw, links)
     if (refs.rows.length) {
       await db.query(
         `INSERT INTO external_reference_observations(snapshot_id,source,external_id,linked_level_id,linked_level_version_id,family,tier,difficulty_label,reference_type,raw_data)
