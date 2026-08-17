@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
+import type { SessionUser } from '@elf/shared'
+import { api } from './api'
 import { I18nProvider, LanguageSwitch, useI18n } from './i18n'
 import { SubmissionReview } from './SubmissionReview'
 import './styles.css'
@@ -8,6 +10,9 @@ import './submission-admin.css'
 function SubmissionAdminOverlay(){
   const { locale }=useI18n()
   const [active,setActive]=useState(location.hash==='#/submissions')
+  const [user,setUser]=useState<SessionUser|null>(null)
+  useEffect(()=>{void api<{user:SessionUser|null}>('/auth/me').then((x)=>setUser(x.user)).catch(()=>setUser(null))},[])
+  const canReview=!!user&&['MODERATOR','ADMIN'].includes(user.role)
 
   useEffect(()=>{
     const onHash=()=>setActive(location.hash==='#/submissions')
@@ -16,6 +21,7 @@ function SubmissionAdminOverlay(){
   },[])
 
   useEffect(()=>{
+    if(!canReview)return
     const ensureButton=()=>{
       const aside=document.querySelector('.admin-shell aside')
       if(!aside||aside.querySelector('[data-submission-review]'))return
@@ -33,9 +39,10 @@ function SubmissionAdminOverlay(){
     observer.observe(document.documentElement,{subtree:true,childList:true})
     ensureButton()
     return()=>observer.disconnect()
-  },[locale])
+  },[locale,canReview])
 
   if(!active)return null
+  if(!canReview)return <div className="submission-admin-overlay"><div className="center"><div className="panel"><p>{locale==='ja'?'投稿審査にはモデレーターまたは管理者権限が必要です。':'Submission review requires Moderator or Admin.'}</p><button onClick={()=>{history.replaceState(null,'',location.pathname+location.search);setActive(false)}}>{locale==='ja'?'戻る':'Back'}</button></div></div></div>
   return <div className="submission-admin-overlay">
     <div className="admin-shell">
       <aside><div className="brand">ELF <span>Admin</span></div><LanguageSwitch/><button onClick={()=>{history.replaceState(null,'',location.pathname+location.search);setActive(false)}}>{locale==='ja'?'管理画面へ戻る':'Back to admin'}</button></aside>
