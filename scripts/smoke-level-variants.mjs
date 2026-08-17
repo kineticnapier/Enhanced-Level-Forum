@@ -41,7 +41,10 @@ for (const invariant of ['VariantKind', 'NERFED', 'KEYLIMIT', 'NO_KEY_LIMIT', 'V
 }
 
 const docs = await readFile(new URL('../docs/LEVEL_VARIANTS.md', import.meta.url), 'utf8')
-for (const invariant of ['Level\n└─ Variant\n   └─ Version', 'Nerfed', '10K', 'SHA-256', 'Rating and clears']) {
+const hierarchy = `Level
+└─ Variant
+   └─ Version`
+for (const invariant of [hierarchy, 'Nerfed', '10K', 'SHA-256', 'Rating and clears']) {
   if (!docs.includes(invariant)) throw new Error(`Variant semantics documentation missing: ${invariant}`)
 }
 
