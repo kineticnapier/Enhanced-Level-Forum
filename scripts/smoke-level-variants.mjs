@@ -40,7 +40,8 @@ for (const invariant of ['VariantKind', 'NERFED', 'KEYLIMIT', 'NO_KEY_LIMIT', 'V
   if (!admin.includes(invariant)) throw new Error(`Variant admin UI missing: ${invariant}`)
 }
 
-const docs = await readFile(new URL('../docs/LEVEL_VARIANTS.md', import.meta.url), 'utf8')
+const docsRaw = await readFile(new URL('../docs/LEVEL_VARIANTS.md', import.meta.url), 'utf8')
+const docs = docsRaw.replace(/\r\n/g, '\n')
 const hierarchy = `Level
 └─ Variant
    └─ Version`
