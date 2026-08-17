@@ -21,6 +21,24 @@ CREATE UNIQUE INDEX IF NOT EXISTS level_variants_primary_idx
 ALTER TABLE level_versions
   ADD COLUMN IF NOT EXISTS variant_id uuid NULL;
 
+-- Submission intake predates Variants. Preserve old pending rows as Original,
+-- while allowing new submitters to specify the gameplay Variant explicitly.
+ALTER TABLE level_submissions
+  ADD COLUMN IF NOT EXISTS variant_name text NOT NULL DEFAULT 'Original',
+  ADD COLUMN IF NOT EXISTS variant_kind text NOT NULL DEFAULT 'ORIGINAL',
+  ADD COLUMN IF NOT EXISTS variant_key_limit integer NULL;
+
+ALTER TABLE level_submissions
+  DROP CONSTRAINT IF EXISTS level_submissions_variant_kind_check;
+ALTER TABLE level_submissions
+  ADD CONSTRAINT level_submissions_variant_kind_check
+  CHECK (variant_kind IN ('ORIGINAL','NERFED','BUFFED','KEYLIMIT','NO_KEY_LIMIT','CUSTOM'));
+ALTER TABLE level_submissions
+  DROP CONSTRAINT IF EXISTS level_submissions_variant_key_limit_check;
+ALTER TABLE level_submissions
+  ADD CONSTRAINT level_submissions_variant_key_limit_check
+  CHECK (variant_key_limit IS NULL OR variant_key_limit >= 1);
+
 -- Every existing Level becomes one work page with one primary Original Variant.
 -- Existing Versions keep their ids, ratings, votes, references and external links.
 INSERT INTO level_variants(level_id,name,kind,is_primary,current_version_id)
