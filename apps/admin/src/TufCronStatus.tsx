@@ -14,12 +14,17 @@ type CronStatus = {
     observedTotal: number | null
     stagedLevels: number
     progress: number | null
+    phase: 'CRAWL' | 'FINALIZE_LEVELS' | 'PUBLISH'
+    finalizeOffset: number
+    finalizedLevels: number
+    finalizeProgress: number | null
+    finalizeStartedAt: string | null
     startedAt: string
     updatedAt: string
   }
   lastRun: null | {
     at: string
-    status: 'PROGRESS' | 'DEFERRED' | 'RESET' | 'BUSY' | 'IMPORTED' | 'FAILED' | null
+    status: 'PROGRESS' | 'FINALIZING' | 'DEFERRED' | 'RESET' | 'BUSY' | 'IMPORTED' | 'FAILED' | null
     reason: string | null
     pagesFetched: number | null
     consecutiveDeferred: number
@@ -39,38 +44,20 @@ export function TufCronStatus() {
   const ja = locale === 'ja'
   const copy = ja ? {
     title: 'TUF Cron Status',
-    help: '15分ごと・最大1000 levelsのTUF incremental crawlが実際に動いているかをDBの状態から確認します。',
-    refresh: '更新',
-    lastTick: '最終Tick',
-    status: '状態',
-    progress: 'クロール進捗',
-    staged: '取得済み',
-    latest: '最新Snapshot',
-    deferred: '連続Deferred',
-    next: '次回予定',
-    schedule: 'Cron',
-    unknown: 'まだ実行記録がありません',
-    noSnapshot: 'まだSnapshotがありません',
+    help: '15分ごとにTUFを取得し、全件取得後のSnapshot生成も1000 levelsずつ分割して処理します。',
+    refresh: '更新', lastTick: '最終Tick', status: '状態', progress: 'クロール進捗', staged: '取得済み',
+    phase: '処理段階', finalize: 'Snapshot準備', latest: '最新Snapshot', deferred: '連続Deferred', next: '次回期待Tick', schedule: 'Cron',
+    unknown: 'まだ実行記録がありません', noSnapshot: 'まだSnapshotがありません',
     migration: 'Cron状態追跡用Migrationが未適用です。production:setupを先に実行してください。',
-    failed: 'Cron状態の取得に失敗しました',
-    levels: 'levels',
+    failed: 'Cron状態の取得に失敗しました', levels: 'levels',
   } : {
     title: 'TUF Cron Status',
-    help: 'Shows whether the 15-minute TUF incremental crawl (up to 1000 levels per tick) is actually progressing, using persisted database state.',
-    refresh: 'Refresh',
-    lastTick: 'Last tick',
-    status: 'Status',
-    progress: 'Crawl progress',
-    staged: 'Staged',
-    latest: 'Latest snapshot',
-    deferred: 'Consecutive deferred',
-    next: 'Next tick',
-    schedule: 'Cron',
-    unknown: 'No scheduled run has been recorded yet.',
-    noSnapshot: 'No TUF snapshot yet.',
+    help: 'Fetches TUF every 15 minutes and also finalizes complete snapshots in chunks of 1000 levels.',
+    refresh: 'Refresh', lastTick: 'Last tick', status: 'Status', progress: 'Crawl progress', staged: 'Staged',
+    phase: 'Phase', finalize: 'Snapshot preparation', latest: 'Latest snapshot', deferred: 'Consecutive deferred', next: 'Next expected tick', schedule: 'Cron',
+    unknown: 'No scheduled run has been recorded yet.', noSnapshot: 'No TUF snapshot yet.',
     migration: 'The Cron status migration has not been applied. Run production:setup before deploying.',
-    failed: 'Failed to load Cron status',
-    levels: 'levels',
+    failed: 'Failed to load Cron status', levels: 'levels',
   }
 
   const [status, setStatus] = useState<CronStatus | null>(null)
@@ -78,16 +65,10 @@ export function TufCronStatus() {
   const [busy, setBusy] = useState(false)
 
   const load = async () => {
-    setBusy(true)
-    setError('')
-    try {
-      const result = await api<{ status: CronStatus }>('/admin/imports/tuf/cron-status')
-      setStatus(result.status)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : copy.failed)
-    } finally {
-      setBusy(false)
-    }
+    setBusy(true); setError('')
+    try { const result = await api<{ status: CronStatus }>('/admin/imports/tuf/cron-status'); setStatus(result.status) }
+    catch (e) { setError(e instanceof Error ? e.message : copy.failed) }
+    finally { setBusy(false) }
   }
 
   useEffect(() => {
@@ -98,6 +79,9 @@ export function TufCronStatus() {
 
   const progress = status?.crawl
     ? `${status.crawl.nextOffset} / ${status.crawl.observedTotal ?? '?'}${status.crawl.progress === null ? '' : ` (${(status.crawl.progress * 100).toFixed(1)}%)`}`
+    : '—'
+  const finalize = status?.crawl && status.crawl.phase !== 'CRAWL'
+    ? `${status.crawl.finalizeOffset} / ${status.crawl.observedTotal ?? '?'}${status.crawl.finalizeProgress === null ? '' : ` (${(status.crawl.finalizeProgress * 100).toFixed(1)}%)`}`
     : '—'
   const latest = status?.latestSnapshot
     ? `${date(status.latestSnapshot.importedAt)} · ${status.latestSnapshot.levels} ${copy.levels}`
@@ -119,8 +103,10 @@ export function TufCronStatus() {
     <div className="tuf-cron-stats">
       <div><span>{copy.lastTick}</span><strong>{status?.lastRun ? date(status.lastRun.at) : copy.unknown}</strong></div>
       <div><span>{copy.status}</span><strong>{status?.lastRun?.status ?? '—'}</strong></div>
+      <div><span>{copy.phase}</span><strong>{status?.crawl?.phase ?? '—'}</strong></div>
       <div><span>{copy.progress}</span><strong>{progress}</strong></div>
       <div><span>{copy.staged}</span><strong>{status?.crawl?.stagedLevels ?? 0}</strong></div>
+      <div><span>{copy.finalize}</span><strong>{finalize}</strong></div>
       <div><span>{copy.latest}</span><strong>{latest}</strong></div>
       <div><span>{copy.deferred}</span><strong>{status?.lastRun?.consecutiveDeferred ?? 0}</strong></div>
       <div><span>{copy.next}</span><strong>{status ? date(status.nextScheduledAt) : '—'}</strong></div>
