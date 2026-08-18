@@ -5,6 +5,7 @@ import { inTransaction, withDb } from './db'
 import { audit } from './services'
 
 const PENDING_PER_USER_LIMIT = 5
+const VARIANT_KINDS = new Set(['ORIGINAL','NERFED','BUFFED','KEYLIMIT','NO_KEY_LIMIT','CUSTOM'])
 
 function clean(value: unknown, max = 1000): string | null {
   if (typeof value !== 'string') return null
@@ -35,6 +36,9 @@ function serialize(row: any) {
     artist: row.artist,
     creator: row.creator,
     effecter: row.effecter,
+    variantName: row.variant_name ?? 'Original',
+    variantKind: row.variant_kind ?? 'ORIGINAL',
+    variantKeyLimit: row.variant_key_limit === null || row.variant_key_limit === undefined ? null : Number(row.variant_key_limit),
     versionLabel: row.version_label,
     sha256: row.sha256,
     downloadUrl: row.download_url,
@@ -66,6 +70,10 @@ export function registerSubmissionRoutes(app: Hono<AppBindings>) {
     const artist = clean(body.artist, 300)
     const creator = clean(body.creator, 300)
     const effecter = clean(body.effecter, 300)
+    const variantKind = (clean(body.variantKind, 32) ?? 'ORIGINAL').toUpperCase()
+    const variantName = clean(body.variantName, 120) ?? (variantKind === 'ORIGINAL' ? 'Original' : variantKind)
+    const rawKeyLimit = body.variantKeyLimit === null || body.variantKeyLimit === undefined || body.variantKeyLimit === '' ? null : Number(body.variantKeyLimit)
+    const variantKeyLimit = rawKeyLimit === null ? null : Math.trunc(rawKeyLimit)
     const versionLabel = clean(body.versionLabel ?? body.version?.label, 120)
     const sha256 = clean(body.sha256 ?? body.version?.sha256, 64)?.toLowerCase() ?? null
     const downloadUrl = clean(body.downloadUrl ?? body.version?.downloadUrl, 2000)
@@ -75,6 +83,10 @@ export function registerSubmissionRoutes(app: Hono<AppBindings>) {
     if (!song || !artist || !creator || !versionLabel) {
       return c.json({ error: 'song, artist, creator and versionLabel are required' }, 400)
     }
+    if (!VARIANT_KINDS.has(variantKind)) return c.json({ error: 'Invalid variantKind' }, 400)
+    if (!variantName) return c.json({ error: 'variantName is required' }, 400)
+    if (variantKind === 'KEYLIMIT' && (!variantKeyLimit || variantKeyLimit < 1)) return c.json({ error: 'variantKeyLimit is required for KEYLIMIT' }, 400)
+    if (variantKeyLimit !== null && variantKeyLimit < 1) return c.json({ error: 'variantKeyLimit must be at least 1' }, 400)
     if (!validSha(sha256)) return c.json({ error: 'sha256 must be 64 hexadecimal characters' }, 400)
     if (!validUrl(downloadUrl) || !validUrl(videoUrl)) return c.json({ error: 'downloadUrl and videoUrl must use http or https' }, 400)
 
@@ -99,21 +111,22 @@ export function registerSubmissionRoutes(app: Hono<AppBindings>) {
         const duplicate = await db.query(
           `SELECT id FROM level_submissions
            WHERE submitted_by=$1 AND status='PENDING' AND lower(song)=lower($2) AND lower(artist)=lower($3)
-             AND lower(creator)=lower($4) AND lower(version_label)=lower($5)
+             AND lower(creator)=lower($4) AND lower(variant_name)=lower($5) AND lower(version_label)=lower($6)
            LIMIT 1`,
-          [user.id, song, artist, creator, versionLabel],
+          [user.id, song, artist, creator, variantName, versionLabel],
         )
         if (duplicate.rowCount) return { error: 'You already have a matching pending submission.', status: 409 as const }
       }
 
       const inserted = await db.query(
         `INSERT INTO level_submissions(
-           submitted_by,song,artist,creator,effecter,version_label,sha256,download_url,video_url,notes
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
-        [user.id, song, artist, creator, effecter, versionLabel, sha256, downloadUrl, videoUrl, notes],
+           submitted_by,song,artist,creator,effecter,variant_name,variant_kind,variant_key_limit,
+           version_label,sha256,download_url,video_url,notes
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
+        [user.id, song, artist, creator, effecter, variantName, variantKind, variantKeyLimit, versionLabel, sha256, downloadUrl, videoUrl, notes],
       )
       await audit(db, user.id, 'LEVEL_SUBMISSION_CREATE', 'level_submission', inserted.rows[0].id, {
-        song, artist, creator, versionLabel, hasSha256: !!sha256,
+        song, artist, creator, variantName, variantKind, variantKeyLimit, versionLabel, hasSha256: !!sha256,
       })
       return { submission: serialize(inserted.rows[0]) }
     }))
@@ -184,11 +197,17 @@ export function registerSubmissionRoutes(app: Hono<AppBindings>) {
          VALUES ($1,$1,$2,$3,$4,'LISTED') RETURNING *`,
         [submission.song, submission.artist, submission.creator, submission.effecter],
       )
-      const version = await db.query(
-        `INSERT INTO level_versions(level_id,label,sha256,download_url,video_url,notes)
-         VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
-        [level.rows[0].id, submission.version_label, submission.sha256, submission.download_url, submission.video_url, submission.notes],
+      const variant = await db.query(
+        `INSERT INTO level_variants(level_id,name,kind,key_limit,is_primary)
+         VALUES ($1,$2,$3,$4,true) RETURNING *`,
+        [level.rows[0].id, submission.variant_name ?? 'Original', submission.variant_kind ?? 'ORIGINAL', submission.variant_key_limit ?? null],
       )
+      const version = await db.query(
+        `INSERT INTO level_versions(level_id,variant_id,label,sha256,download_url,video_url,notes)
+         VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+        [level.rows[0].id, variant.rows[0].id, submission.version_label, submission.sha256, submission.download_url, submission.video_url, submission.notes],
+      )
+      await db.query(`UPDATE level_variants SET current_version_id=$2,updated_at=now() WHERE id=$1`, [variant.rows[0].id, version.rows[0].id])
       await db.query(`UPDATE levels SET current_version_id=$2,updated_at=now() WHERE id=$1`, [level.rows[0].id, version.rows[0].id])
       const updated = await db.query(
         `UPDATE level_submissions SET status='APPROVED',review_note=$2,reviewed_by=$3,reviewed_at=now(),
@@ -197,13 +216,13 @@ export function registerSubmissionRoutes(app: Hono<AppBindings>) {
         [submission.id, reviewNote, user.id, level.rows[0].id, version.rows[0].id],
       )
       await audit(db, user.id, 'LEVEL_SUBMISSION_APPROVE', 'level_submission', submission.id, {
-        levelId: level.rows[0].id, levelVersionId: version.rows[0].id,
+        levelId: level.rows[0].id, variantId: variant.rows[0].id, levelVersionId: version.rows[0].id,
         ratingQueue: 'not automatically enqueued',
       })
       await audit(db, user.id, 'LEVEL_CREATE_FROM_SUBMISSION', 'level', level.rows[0].id, {
-        submissionId: submission.id, versionId: version.rows[0].id,
+        submissionId: submission.id, variantId: variant.rows[0].id, versionId: version.rows[0].id,
       })
-      return { submission: serialize(updated.rows[0]), level: level.rows[0], version: version.rows[0] }
+      return { submission: serialize(updated.rows[0]), level: level.rows[0], variant: variant.rows[0], version: version.rows[0] }
     }))
     if ('error' in approved) return c.json({ error: approved.error }, approved.status)
     return c.json(approved, 201)
