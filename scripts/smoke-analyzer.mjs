@@ -10,6 +10,7 @@ if (result.keyCountCurve.length !== 6) throw new Error('explicit key-count curve
 if (!Array.isArray(result.fingeringTrace) || result.fingeringTrace.length !== 24) throw new Error('best fingering trace missing')
 if (!Number.isInteger(result.traceKeyCount)) throw new Error('trace key count missing')
 if (!result.fingeringTrace.every((x) => typeof x.fingerLabel === 'string' && (x.hand === 'L' || x.hand === 'R'))) throw new Error('hand-aware trace labels missing')
+if (!result.keyCountCurve.every((x) => Number.isFinite(x.peakLocalCostPerPress))) throw new Error('local peak load metric missing')
 for (let i = 1; i < result.keyCountCurve.length; i++) {
   const prev = result.keyCountCurve[i - 1]
   const next = result.keyCountCurve[i]
@@ -20,6 +21,40 @@ const adaptive = analyzeFingering({ hitTimesMs: Array.from({ length: 16 }, (_, i
 if (!adaptive.config.adaptiveStop) throw new Error('default search should be adaptive')
 if (adaptive.keyCountCurve.length >= adaptive.config.requestedKeyCounts.length) throw new Error('easy chart should stop before full default curve')
 if (!adaptive.fingeringTrace?.length) throw new Error('adaptive search must rerun selected key count with trace')
+const expectedDefaultKeys = [2, 3, 4, 6, 8, 10, 12, 16, 24]
+if (JSON.stringify(adaptive.config.requestedKeyCounts) !== JSON.stringify(expectedDefaultKeys)) throw new Error('default key-count curve must be 2K -> 3K -> 4K -> 6K -> 8K -> ...')
+if (adaptive.config.requestedKeyCounts.includes(5) || adaptive.config.requestedKeyCounts.includes(7)) throw new Error('5K/7K must not be automatic bridge points')
+
+const naturalAlternation = estimateFingeringForKeyCount(
+  { hitTimesMs: Array.from({ length: 20 }, (_, i) => i * 90) },
+  4,
+  { collectTrace: true, beamWidth: 128 },
+)
+const naturalLabels = new Set(naturalAlternation.fingeringTrace?.map((x) => x.fingerLabel) ?? [])
+if ([...naturalLabels].some((label) => !['LI', 'RI'].includes(label))) throw new Error(`moderate 2-key alternation should prefer LI/RI, got ${[...naturalLabels].join('/')}`)
+
+const tripletRoll = estimateFingeringForKeyCount(
+  { hitTimesMs: Array.from({ length: 24 }, (_, i) => i * 65) },
+  3,
+  { collectTrace: true, beamWidth: 160 },
+)
+if (!tripletRoll.feasible) throw new Error('3K triplet roll should be feasible')
+if (tripletRoll.fingerProfile.map((x) => x.label).join('/') !== 'LI/RI/RM') throw new Error('3K profile should prioritize LI/RI/RM')
+if (new Set(tripletRoll.fingeringTrace?.map((x) => x.finger) ?? []).size < 3) throw new Error('fast triplet stream should actually use the 3K roll')
+
+const localBurstInput = {
+  hitTimesMs: [
+    ...Array.from({ length: 18 }, (_, i) => i * 220),
+    ...Array.from({ length: 18 }, (_, i) => 4500 + i * 25),
+    ...Array.from({ length: 18 }, (_, i) => 5500 + i * 220),
+  ],
+  keyCounts: [4, 6, 8],
+}
+const localBurst = analyzeFingering(localBurstInput, { beamWidth: 128 })
+const burst4 = localBurst.keyCountCurve.find((x) => x.keyCount === 4)
+const burst6 = localBurst.keyCountCurve.find((x) => x.keyCount === 6)
+if (!Number.isFinite(burst4?.peakLocalCostPerPress) || !Number.isFinite(burst6?.peakLocalCostPerPress)) throw new Error('burst peak metrics missing')
+if (!(burst6.peakLocalCostPerPress < burst4.peakLocalCostPerPress)) throw new Error('6K should reduce the local burst bottleneck versus 4K')
 
 const chord = { events: [{ timeMs: 0, presses: 3 }, { timeMs: 100, presses: 1 }] }
 const two = estimateFingeringForKeyCount(chord, 2)
@@ -79,4 +114,4 @@ for (const filename of ['tile_unlit.png', 'planet-red.png', 'planet-blue.png', '
 }
 
 console.log('DP FINGERING ANALYZER STATIC SMOKE PASSED')
-console.log('.adofai timing/geometry/events -> hand-aware beam-DP -> textured ADOFAI-style playback + finger key viewer')
+console.log('.adofai timing/geometry/events -> local-peak-aware hand DP -> textured ADOFAI-style playback + finger key viewer')
