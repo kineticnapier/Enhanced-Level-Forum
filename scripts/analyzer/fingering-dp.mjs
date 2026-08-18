@@ -1,6 +1,6 @@
-export const FINGERING_MODEL_VERSION = 'fingering-dp-v0.4'
+export const FINGERING_MODEL_VERSION = 'fingering-dp-v0.5'
 
-const DEFAULT_KEY_COUNTS = [2, 3, 4, 5, 6, 7, 8, 10, 12, 16, 24]
+const DEFAULT_KEY_COUNTS = [2, 3, 4, 6, 8, 10, 12, 16, 24]
 const DEFAULT_OPTIONS = {
   beamWidth: 160,
   reuseWindowMs: 170,
@@ -71,7 +71,7 @@ function handProfile(keyCount) {
   const named = {
     1: ['RI'],
     2: ['LI', 'RI'],
-    3: ['LM', 'LI', 'RI'],
+    3: ['LI', 'RI', 'RM'],
     4: ['LM', 'LI', 'RI', 'RM'],
     5: ['LR', 'LM', 'LI', 'RI', 'RM'],
     6: ['LR', 'LM', 'LI', 'RI', 'RM', 'RR'],
