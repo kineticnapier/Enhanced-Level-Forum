@@ -1,17 +1,25 @@
-export const FINGERING_MODEL_VERSION = 'fingering-dp-v0.3'
+export const FINGERING_MODEL_VERSION = 'fingering-dp-v0.4'
 
-const DEFAULT_KEY_COUNTS = [2, 4, 6, 8, 10, 12, 16, 24]
+const DEFAULT_KEY_COUNTS = [2, 3, 4, 5, 6, 7, 8, 10, 12, 16, 24]
 const DEFAULT_OPTIONS = {
   beamWidth: 160,
-  reuseWindowMs: 150,
+  reuseWindowMs: 170,
   reuseWeight: 4,
   sameFingerWeight: 0.14,
-  sameHandWeight: 0.035,
+  sameHandWeight: 0.015,
   handJumpWeight: 0.16,
+  crossHandMismatchWeight: 0.18,
+  fingerPreferenceWeight: 0.08,
   reversalWeight: 0.12,
   longRunWeight: 0.025,
+  localWindowPresses: 12,
   practicalCostPerPress: 0.75,
-  comfortableCostPerPress: 0.25,
+  practicalPeakCostPerPress: 1.15,
+  comfortableCostPerPress: 0.22,
+  comfortablePeakCostPerPress: 0.48,
+  saturationAverageImprovement: 0.34,
+  saturationPeakImprovement: 0.28,
+  saturationLookahead: 2,
   fullCurve: false,
   collectTrace: false,
 }
@@ -49,6 +57,16 @@ function effectiveBeamWidth(requested, keyCount) {
   return Math.max(32, Math.min(base, Math.floor((base * 8) / keyCount)))
 }
 
+function digitInfo(label, fallbackOrder) {
+  const digit = label.slice(-1)
+  if (digit === 'I') return { digitRank: 0, preference: 0 }
+  if (digit === 'M') return { digitRank: 1, preference: 0.22 }
+  if (digit === 'R') return { digitRank: 2, preference: 0.52 }
+  if (digit === 'P') return { digitRank: 3, preference: 0.9 }
+  if (digit === 'T') return { digitRank: 0.6, preference: 0.62 }
+  return { digitRank: fallbackOrder, preference: Math.min(1, fallbackOrder * 0.18) }
+}
+
 function handProfile(keyCount) {
   const named = {
     1: ['RI'],
@@ -70,7 +88,7 @@ function handProfile(keyCount) {
   return labels.map((label, index) => {
     const hand = label.startsWith('L') ? 'L' : 'R'
     const order = hand === 'L' ? index : index - leftCount
-    return { index, label, hand, order }
+    return { index, label, hand, order, ...digitInfo(label, order) }
   })
 }
 
@@ -106,9 +124,9 @@ function transitionCost(state, finger, timeMs, profile, options) {
   const last = state.lastFinger >= 0 ? profile[state.lastFinger] : null
   const prev = state.prevFinger >= 0 ? profile[state.prevFinger] : null
   const lastGap = state.lastEventTime >= 0 ? Math.max(0, timeMs - state.lastEventTime) : Infinity
-  const fast = Math.max(0, 1 - lastGap / 180)
+  const fast = Math.max(0, 1 - lastGap / 190)
 
-  let ergonomicPenalty = 0
+  let ergonomicPenalty = current.preference * options.fingerPreferenceWeight
   if (last) {
     if (last.index === current.index) ergonomicPenalty += options.sameFingerWeight
     if (last.hand === current.hand) {
@@ -122,6 +140,10 @@ function transitionCost(state, finger, timeMs, profile, options) {
         if (a !== 0 && b !== 0 && a !== b) ergonomicPenalty += options.reversalWeight * fast
       }
       if (state.sameHandRun >= 4) ergonomicPenalty += (state.sameHandRun - 3) * options.longRunWeight * fast
+    } else {
+      // Cross-hand alternation is natural, but mismatched digits such as LM <-> RI
+      // should not beat the usual LI <-> RI pair unless recovery pressure requires it.
+      ergonomicPenalty += Math.abs(current.digitRank - last.digitRank) * options.crossHandMismatchWeight * fast
     }
   }
 
@@ -142,7 +164,22 @@ function initialState(keyCount) {
     switches: 0,
     handSwitches: 0,
     maxReusePenalty: 0,
+    maxTransitionCost: 0,
+    recentCosts: [],
+    recentCostSum: 0,
+    peakLocalCostPerPress: 0,
     trace: null,
+  }
+}
+
+function pushLocalCost(state, transitionCostValue, windowSize) {
+  const recentCosts = [...state.recentCosts, transitionCostValue]
+  let recentCostSum = state.recentCostSum + transitionCostValue
+  while (recentCosts.length > windowSize) recentCostSum -= recentCosts.shift()
+  return {
+    recentCosts,
+    recentCostSum,
+    peakLocalCostPerPress: Math.max(state.peakLocalCostPerPress, recentCostSum / Math.max(1, recentCosts.length)),
   }
 }
 
@@ -165,11 +202,12 @@ export function estimateFingeringForKeyCount(rawInput, keyCount, rawOptions = {}
   const beamWidth = effectiveBeamWidth(options.beamWidth, keyCount)
   const collectTrace = options.collectTrace === true
   const profile = handProfile(keyCount)
+  const localWindowPresses = Math.max(2, Math.trunc(finiteNumber(options.localWindowPresses, 'localWindowPresses')))
 
   const totalPresses = events.reduce((sum, event) => sum + event.presses, 0)
   const maxSimultaneousPresses = events.reduce((max, event) => Math.max(max, event.presses), 0)
   if (maxSimultaneousPresses > keyCount) {
-    return { keyCount, feasible: false, reason: 'SIMULTANEOUS_PRESS_COUNT_EXCEEDS_KEYS', totalCost: null, costPerPress: null, totalPresses, maxSimultaneousPresses, sameFingerRate: null, switchRate: null, handSwitchRate: null, maxReusePenalty: null, fingerCounts: null, minGapMsPerFinger: null, prunedStates: 0, beamWidth, fingeringTrace: null, fingerProfile: profile }
+    return { keyCount, feasible: false, reason: 'SIMULTANEOUS_PRESS_COUNT_EXCEEDS_KEYS', totalCost: null, costPerPress: null, peakLocalCostPerPress: null, maxTransitionCost: null, totalPresses, maxSimultaneousPresses, sameFingerRate: null, switchRate: null, handSwitchRate: null, maxReusePenalty: null, fingerCounts: null, minGapMsPerFinger: null, prunedStates: 0, beamWidth, fingeringTrace: null, fingerProfile: profile }
   }
 
   let beam = [initialState(keyCount)]
@@ -186,7 +224,8 @@ export function estimateFingeringForKeyCount(rawInput, keyCount, rawOptions = {}
           const tc = transitionCost(wrapper.state, finger, event.timeMs, profile, options)
           const lastProfile = wrapper.state.lastFinger >= 0 ? profile[wrapper.state.lastFinger] : null
           const currentProfile = profile[finger]
-          const handChanged = lastProfile && lastProfile.hand !== currentProfile.hand
+          const handChanged = Boolean(lastProfile && lastProfile.hand !== currentProfile.hand)
+          const local = pushLocalCost(wrapper.state, tc.total, localWindowPresses)
           const next = {
             cost: wrapper.state.cost + tc.total,
             prevFinger: wrapper.state.lastFinger,
@@ -200,6 +239,8 @@ export function estimateFingeringForKeyCount(rawInput, keyCount, rawOptions = {}
             switches: wrapper.state.switches + (wrapper.state.lastFinger >= 0 && wrapper.state.lastFinger !== finger ? 1 : 0),
             handSwitches: wrapper.state.handSwitches + (handChanged ? 1 : 0),
             maxReusePenalty: Math.max(wrapper.state.maxReusePenalty, tc.reusePenalty),
+            maxTransitionCost: Math.max(wrapper.state.maxTransitionCost, tc.total),
+            ...local,
             trace: collectTrace ? { timeMs: event.timeMs, finger, eventIndex, pressIndex, parent: wrapper.state.trace } : null,
           }
           next.lastUse[finger] = event.timeMs
@@ -220,7 +261,7 @@ export function estimateFingeringForKeyCount(rawInput, keyCount, rawOptions = {}
   }
 
   if (!beam.length) {
-    return { keyCount, feasible: false, reason: 'NO_FINGERING_PATH', totalCost: null, costPerPress: null, totalPresses, maxSimultaneousPresses, sameFingerRate: null, switchRate: null, handSwitchRate: null, maxReusePenalty: null, fingerCounts: null, minGapMsPerFinger: null, prunedStates, beamWidth, fingeringTrace: null, fingerProfile: profile }
+    return { keyCount, feasible: false, reason: 'NO_FINGERING_PATH', totalCost: null, costPerPress: null, peakLocalCostPerPress: null, maxTransitionCost: null, totalPresses, maxSimultaneousPresses, sameFingerRate: null, switchRate: null, handSwitchRate: null, maxReusePenalty: null, fingerCounts: null, minGapMsPerFinger: null, prunedStates, beamWidth, fingeringTrace: null, fingerProfile: profile }
   }
 
   const best = beam[0]
@@ -230,6 +271,9 @@ export function estimateFingeringForKeyCount(rawInput, keyCount, rawOptions = {}
     feasible: true,
     totalCost: best.cost,
     costPerPress: totalPresses ? best.cost / totalPresses : 0,
+    peakLocalCostPerPress: best.peakLocalCostPerPress,
+    maxTransitionCost: best.maxTransitionCost,
+    localWindowPresses,
     totalPresses,
     maxSimultaneousPresses,
     sameFingerRate: best.sameFingerTransitions / transitions,
@@ -243,6 +287,39 @@ export function estimateFingeringForKeyCount(rawInput, keyCount, rawOptions = {}
     fingerProfile: profile,
     fingeringTrace: collectTrace ? recoverTrace(best.trace, profile) : null,
   }
+}
+
+function qualifies(point, averageThreshold, peakThreshold) {
+  return Boolean(point?.feasible && point.costPerPress <= averageThreshold && point.peakLocalCostPerPress <= peakThreshold)
+}
+
+function relativeImprovement(from, to) {
+  if (!Number.isFinite(from) || !Number.isFinite(to) || from <= 1e-9) return 0
+  return Math.max(0, (from - to) / from)
+}
+
+function isSaturated(curve, index, options, requireLookahead) {
+  const point = curve[index]
+  const lookahead = Math.max(1, Math.trunc(options.saturationLookahead))
+  const later = curve.slice(index + 1, index + 1 + lookahead).filter((x) => x.feasible)
+  if (requireLookahead && later.length < lookahead) return false
+  if (!later.length) return true
+  for (const next of later) {
+    const averageGain = relativeImprovement(point.costPerPress, next.costPerPress)
+    const peakGain = relativeImprovement(point.peakLocalCostPerPress, next.peakLocalCostPerPress)
+    if (averageGain >= options.saturationAverageImprovement || peakGain >= options.saturationPeakImprovement) return false
+  }
+  return true
+}
+
+function selectThresholdPoint(curve, options, kind, requireLookahead = false) {
+  const averageThreshold = kind === 'comfortable' ? options.comfortableCostPerPress : options.practicalCostPerPress
+  const peakThreshold = kind === 'comfortable' ? options.comfortablePeakCostPerPress : options.practicalPeakCostPerPress
+  for (let i = 0; i < curve.length; i++) {
+    if (!qualifies(curve[i], averageThreshold, peakThreshold)) continue
+    if (isSaturated(curve, i, options, requireLookahead)) return curve[i]
+  }
+  return null
 }
 
 export function analyzeFingering(rawInput, rawOptions = {}) {
@@ -259,14 +336,21 @@ export function analyzeFingering(rawInput, rawOptions = {}) {
   for (const keyCount of keyCounts) {
     const point = estimateFingeringForKeyCount({ events }, keyCount, { ...options, collectTrace: false })
     curve.push(point)
-    if (!explicitKeyCounts && options.fullCurve !== true && point.feasible && point.costPerPress <= options.comfortableCostPerPress) break
+    if (!explicitKeyCounts && options.fullCurve !== true) {
+      // Do not stop on the first apparently comfortable K. Require enough larger-K
+      // lookahead to prove that adding fingers does not remove a local bottleneck.
+      const stableComfortable = selectThresholdPoint(curve, options, 'comfortable', true)
+      if (stableComfortable) break
+    }
   }
 
-  const practical = curve.find((point) => point.feasible && point.costPerPress <= options.practicalCostPerPress) ?? null
-  const comfortable = curve.find((point) => point.feasible && point.costPerPress <= options.comfortableCostPerPress) ?? null
-  const traceKeyCount = Number.isFinite(Number(rawInput?.traceKeyCount)) ? Math.trunc(Number(rawInput.traceKeyCount)) : (comfortable?.keyCount ?? practical?.keyCount ?? curve.find((point) => point.feasible)?.keyCount ?? null)
+  const practical = selectThresholdPoint(curve, options, 'practical', false)
+  const comfortable = selectThresholdPoint(curve, options, 'comfortable', false)
+  const traceKeyCount = Number.isFinite(Number(rawInput?.traceKeyCount))
+    ? Math.trunc(Number(rawInput.traceKeyCount))
+    : (comfortable?.keyCount ?? practical?.keyCount ?? curve.find((point) => point.feasible)?.keyCount ?? null)
   const traced = traceKeyCount ? estimateFingeringForKeyCount({ events }, traceKeyCount, { ...options, collectTrace: true }) : null
-  const standard10 = curve.find((point) => point.keyCount <= 10 && point.feasible && point.costPerPress <= options.practicalCostPerPress) ?? null
+  const standard10 = curve.find((point) => point.keyCount <= 10 && qualifies(point, options.practicalCostPerPress, options.practicalPeakCostPerPress)) ?? null
   const warnings = []
   if (!standard10 && curve.some((point) => point.keyCount >= 10)) warnings.push('STANDARD_FINGERING_MODEL_OUT_OF_RANGE')
   if (practical && practical.keyCount > 10) warnings.push('MULTI_KEYBOARD_LIKELY')
@@ -298,10 +382,18 @@ export function analyzeFingering(rawInput, rawOptions = {}) {
       sameFingerWeight: options.sameFingerWeight,
       sameHandWeight: options.sameHandWeight,
       handJumpWeight: options.handJumpWeight,
+      crossHandMismatchWeight: options.crossHandMismatchWeight,
+      fingerPreferenceWeight: options.fingerPreferenceWeight,
       reversalWeight: options.reversalWeight,
       longRunWeight: options.longRunWeight,
+      localWindowPresses: options.localWindowPresses,
       practicalCostPerPress: options.practicalCostPerPress,
+      practicalPeakCostPerPress: options.practicalPeakCostPerPress,
       comfortableCostPerPress: options.comfortableCostPerPress,
+      comfortablePeakCostPerPress: options.comfortablePeakCostPerPress,
+      saturationAverageImprovement: options.saturationAverageImprovement,
+      saturationPeakImprovement: options.saturationPeakImprovement,
+      saturationLookahead: options.saturationLookahead,
     },
     keyCountCurve: curve,
     estimatedMinKeys: practical?.keyCount ?? null,
@@ -309,7 +401,18 @@ export function analyzeFingering(rawInput, rawOptions = {}) {
     traceKeyCount: traced?.keyCount ?? null,
     fingerProfile: traced?.fingerProfile ?? null,
     fingeringTrace: traced?.fingeringTrace ?? null,
-    traceStats: traced ? { totalCost: traced.totalCost, costPerPress: traced.costPerPress, fingerCounts: traced.fingerCounts, minGapMsPerFinger: traced.minGapMsPerFinger, handSwitchRate: traced.handSwitchRate, beamWidth: traced.beamWidth, prunedStates: traced.prunedStates } : null,
+    traceStats: traced ? {
+      totalCost: traced.totalCost,
+      costPerPress: traced.costPerPress,
+      peakLocalCostPerPress: traced.peakLocalCostPerPress,
+      maxTransitionCost: traced.maxTransitionCost,
+      localWindowPresses: traced.localWindowPresses,
+      fingerCounts: traced.fingerCounts,
+      minGapMsPerFinger: traced.minGapMsPerFinger,
+      handSwitchRate: traced.handSwitchRate,
+      beamWidth: traced.beamWidth,
+      prunedStates: traced.prunedStates,
+    } : null,
     warnings,
     canonicalRatingMutation: false,
   }
