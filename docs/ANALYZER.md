@@ -6,27 +6,110 @@ ELF Analyzerは、確定難易度を自動決定する機能ではありませ�
 
 > Analyzer output must never directly create or modify a canonical rating.
 
-## v0.1: DP運指推定
+## v0.2: .adofai → 入力時刻 → DP運指推定
 
-最初のAnalyzerは、入力タイミング列から複数キー数で運指を推定します。
+現在のAnalyzerは `.adofai` を直接読み込み、譜面の入力時刻を復元してから複数キー数で運指を推定します。
 
 ```text
-入力タイミング
+.adofai
+↓
+angleData / pathData
+↓
+Twirl / SetSpeed / pitch / midspin
+↓
+入力時刻列
 ↓
 beam-pruned dynamic programming
 ↓
 2K / 4K / 6K / 8K / 10K / 12K / 16K / 24K ...
 ↓
-各キー数の最小推定コスト
-↓
 key-count curve + warnings
 ```
 
-巨大譜面をCloudflare Worker上で直接解析するとCPU制限に当たりやすいため、v0.1はローカルCLIとして実行します。
+巨大譜面ではDP探索量が大きくなるため、現段階ではCloudflare WorkerではなくローカルCLIで実行します。
 
-## 入力
+## 実行
 
-現在はADOFAIファイルそのものではなく、譜面から抽出済みの入力時刻を受け取ります。
+`.adofai` を直接解析できます。
+
+```powershell
+npm run analyzer:fingering -- .\level.adofai
+```
+
+結果をJSONへ保存する場合:
+
+```powershell
+npm run analyzer:fingering -- .\level.adofai .\result.json
+```
+
+従来の抽出済みtiming JSONも引き続き利用できます。
+
+```powershell
+npm run analyzer:fingering -- .\timings.json
+```
+
+## .adofai timing extractor
+
+`adofai-timing-v0.2` は次を処理します。
+
+- `angleData`
+- 旧形式 `pathData`
+- `Twirl`
+- `SetSpeed`
+  - `Multiplier`
+  - absolute BPM (`beatsPerMinute`)
+- `settings.bpm`
+- `settings.pitch`
+- midspin (`999` / `!`)
+- `Pause` のduration
+- `Hold` のduration（時間長のみ）
+
+`.adofai` に存在する末尾カンマにも対応します。
+
+`settings.offset` と `countdownTicks` は再生開始位置のメタデータとして結果に残しますが、運指の相対入力間隔には足しません。
+
+### 現在の近似
+
+`Hold` は次の入力までの時間には反映しますが、「どの指を何ms押し続けるか」という占有状態はまだDPに入れていません。そのため:
+
+- `HOLD_INPUT_SEMANTICS_APPROXIMATE`
+
+を出します。
+
+`MultiPlanet` は現時点で必要入力数を正確に復元していないため:
+
+- `MULTIPLANET_PRESS_COUNT_NOT_MODELED`
+
+を出します。
+
+`AutoPlayTiles` も自動入力区間をまだ除外していないため:
+
+- `AUTOPLAY_TILE_INPUT_NOT_MODELED`
+
+を出します。
+
+これらのwarningがある結果は、通常譜面と同じ精度として扱わない前提です。
+
+## timing出力
+
+`.adofai` 入力時はAnalyzer JSONに `timing` が追加されます。
+
+主なフィールド:
+
+- `extractorVersion`
+- `angleSource`: `angleData` / `pathData`
+- `pathEntryCount`
+- `pressEventCount`
+- `baseBpm`
+- `pitch`
+- `offsetMs`
+- `warnings`
+- `unsupportedEvents`
+- `segments`
+
+`segments` には各区間のBPM、移動角度、beat長、hit時刻などを保存するため、タイミング復元のデバッグにも使えます。
+
+## 直接timing入力
 
 単押し列:
 
@@ -53,21 +136,9 @@ key-count curve + warnings
 
 `hitTimesMs`で同じ時刻が複数回現れた場合も同時押しとしてまとめられます。
 
-## 実行
-
-```powershell
-npm run analyzer:fingering -- .\timings.json
-```
-
-ファイルへ保存する場合:
-
-```powershell
-npm run analyzer:fingering -- .\timings.json .\result.json
-```
-
 ## DP状態
 
-v0.1の状態は主に次を保持します。
+現在の状態は主に次を保持します。
 
 - 各指/キーが最後に使われた時刻
 - 直前に使った指
@@ -87,11 +158,9 @@ v0.1の状態は主に次を保持します。
 - 指位置の移動距離
 - 同じ指を連続使用する小さな追加ペナルティ
 
-この係数は将来、実際のRater運指データから調整する予定です。
+この係数は将来、実際のRater運指データから調整します。
 
 ## key-count curve
-
-同じ入力列を複数のキー数で解析します。
 
 ```text
 2K   cost = ...
@@ -110,17 +179,19 @@ v0.1の状態は主に次を保持します。
 - `comfortableKeys`: より低いcomfortable thresholdを初めて満たすキー数
 - `keyCountCurve`: 各キー数のコストと運指統計
 
-これらは難易度そのものではありません。たとえば12Kが必要と推定されても、それだけでU系の特定tierになるわけではありません。
+これらは難易度そのものではありません。
 
-## warnings
+## Analyzer warnings
 
-v0.1では次の警告を出せます。
+運指DP側では次の警告を出せます。
 
-- `STANDARD_FINGERING_MODEL_OUT_OF_RANGE`: 10K以下でpractical thresholdを満たさない
-- `MULTI_KEYBOARD_LIKELY`: practical thresholdに11K以上が必要
-- `EXTREME_KEY_COUNT`: 指定した最大キー数でもpractical thresholdを満たさない
-- `HIGH_SIMULTANEOUS_PRESS_COUNT`: 10を超える同時押しが存在
-- `BEAM_PRUNED`: 探索候補をbeam幅で削った
+- `STANDARD_FINGERING_MODEL_OUT_OF_RANGE`
+- `MULTI_KEYBOARD_LIKELY`
+- `EXTREME_KEY_COUNT`
+- `HIGH_SIMULTANEOUS_PRESS_COUNT`
+- `BEAM_PRUNED`
+
+Timing extractor側のwarningとは別に保持されます。
 
 ## AnalyzerとRating
 
@@ -140,13 +211,14 @@ Analyzerは`canonical_ratings`を書き換えません。将来`analyzer_runs` /
 
 ## 今後
 
-v0.1の次に必要なもの:
+次に必要なもの:
 
-1. `.adofai`から正確な入力タイミングを抽出するparser
-2. SetSpeed / Twirl / Midspin / MultiPlanet等を含むイベント解釈
-3. 局所burst / stamina / percentile feature
-4. 実際の運指データによるコスト校正
-5. Analyzer結果のDB保存とAdmin表示
-6. P/G/U family classifier + tier regressor
+1. 実譜面とのタイミング照合テストを増やす
+2. `Hold` の指占有状態
+3. `MultiPlanet` の入力列復元
+4. 局所burst / stamina / percentile feature
+5. 実際の運指データによるコスト校正
+6. Analyzer結果のDB保存とAdmin表示
+7. P/G/U family classifier + tier regressor
 
 難易度モデルを追加しても、確定難易度の最終決定は人間側に残します。
