@@ -1,4 +1,4 @@
-export const ADOFAI_TIMING_VERSION = 'adofai-timing-v0.2'
+export const ADOFAI_TIMING_VERSION = 'adofai-timing-v0.3'
 
 const PATH_ANGLES = {
   R: 0, p: 15, J: 30, E: 45, T: 60, o: 75, U: 90, q: 105,
@@ -84,6 +84,24 @@ export function getAdofaiAngles(level) {
   throw new Error('.adofai must contain angleData[] or pathData')
 }
 
+function buildTrackGeometry(path) {
+  const floors = [{ floor: 0, x: 0, y: 0, angle: path[0], midspin: false }]
+  let x = 0
+  let y = 0
+  for (let floor = 1; floor < path.length; floor++) {
+    const angle = path[floor]
+    if (angle === 999) {
+      floors.push({ floor, x, y, angle, midspin: true })
+      continue
+    }
+    const rad = angle * Math.PI / 180
+    x += Math.cos(rad)
+    y += Math.sin(rad)
+    floors.push({ floor, x, y, angle, midspin: false })
+  }
+  return floors
+}
+
 function groupActions(actions) {
   const byFloor = new Map()
   for (let index = 0; index < actions.length; index++) {
@@ -115,15 +133,6 @@ function applySetSpeed(action, bpm, warnings) {
   return bpm
 }
 
-/**
- * Convert one .adofai document to press events for the deterministic fingering
- * analyzer. The geometric timing follows ADOFAI's tile-angle model, including
- * Twirl, midspin (999), SetSpeed and level pitch.
- *
- * Pause/Hold extend the timeline in beats. Hold occupancy/release behavior and
- * MultiPlanet press multiplicity are intentionally not inferred yet; warnings
- * make those approximations visible to downstream Analyzer consumers.
- */
 export function extractAdofaiPressEvents(level, options = {}) {
   if (!level || typeof level !== 'object') throw new Error('ADOFAI level must be an object')
   const { source: angleSource, angles } = getAdofaiAngles(level)
@@ -144,9 +153,8 @@ export function extractAdofaiPressEvents(level, options = {}) {
   if (unsupportedEvents.includes('MultiPlanet')) warnings.push('MULTIPLANET_PRESS_COUNT_NOT_MODELED')
   if (unsupportedEvents.includes('AutoPlayTiles')) warnings.push('AUTOPLAY_TILE_INPUT_NOT_MODELED')
 
-  // The starting direction is 0 degrees. Each angleData/pathData item describes
-  // the next floor. 999 is a midspin marker and creates no player press itself.
   const path = [0, ...angles]
+  const track = buildTrackGeometry(path)
   let direction = -1
   let bpm = baseBpm
   let elapsedMs = 0
@@ -155,6 +163,7 @@ export function extractAdofaiPressEvents(level, options = {}) {
   const segments = []
 
   for (let sourceFloor = 0; sourceFloor < path.length - 1; sourceFloor++) {
+    const segmentStartMs = elapsedMs
     const floorActions = actionsByFloor.get(sourceFloor) ?? []
     let extraBeats = 0
     for (const action of floorActions) {
@@ -167,14 +176,27 @@ export function extractAdofaiPressEvents(level, options = {}) {
     }
 
     if (!(bpm > 0)) throw new Error(`Computed BPM is invalid at floor ${sourceFloor}`)
-    if (extraBeats > 0) elapsedMs += extraBeats * beatDurationMs(bpm, pitch)
+    const extraMs = extraBeats * beatDurationMs(bpm, pitch)
+    elapsedMs += extraMs
+    const travelStartMs = elapsedMs
 
     const current = path[sourceFloor]
     const next = path[sourceFloor + 1]
 
     if (next === 999) {
       floorTile = current
-      segments.push({ sourceFloor, targetFloor: sourceFloor + 1, midspin: true, bpm, extraBeats })
+      segments.push({
+        sourceFloor,
+        targetFloor: sourceFloor + 1,
+        midspin: true,
+        bpm,
+        direction,
+        extraBeats,
+        extraMs,
+        segmentStartMs,
+        travelStartMs,
+        hitTimeMs: elapsedMs,
+      })
       continue
     }
 
@@ -200,7 +222,11 @@ export function extractAdofaiPressEvents(level, options = {}) {
       targetFloor: sourceFloor + 1,
       midspin: false,
       bpm,
+      direction,
       extraBeats,
+      extraMs,
+      segmentStartMs,
+      travelStartMs,
       travelDegrees,
       travelBeats,
       travelMs,
@@ -226,8 +252,9 @@ export function extractAdofaiPressEvents(level, options = {}) {
       countdownTicks: finite(settings.countdownTicks, null),
       warnings: [...new Set(uniqueWarnings)],
       unsupportedEvents,
+      track,
       segments: options.includeSegments === false ? undefined : segments,
-      note: 'offset/countdown are playback alignment metadata and are not added to relative fingering intervals',
+      note: 'track/segment data is exposed for ELF playback visualization; offset/countdown are not added to relative fingering intervals',
     },
   }
 }
