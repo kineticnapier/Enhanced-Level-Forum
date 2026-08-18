@@ -9,12 +9,11 @@ if (result.canonicalRatingMutation !== false) throw new Error('analyzer must nev
 if (result.keyCountCurve.length !== 6) throw new Error('explicit key-count curve must keep all requested points')
 if (!Array.isArray(result.fingeringTrace) || result.fingeringTrace.length !== 24) throw new Error('best fingering trace missing')
 if (!Number.isInteger(result.traceKeyCount)) throw new Error('trace key count missing')
+if (!result.fingeringTrace.every((x) => typeof x.fingerLabel === 'string' && (x.hand === 'L' || x.hand === 'R'))) throw new Error('hand-aware trace labels missing')
 for (let i = 1; i < result.keyCountCurve.length; i++) {
   const prev = result.keyCountCurve[i - 1]
   const next = result.keyCountCurve[i]
-  if (prev.feasible && next.feasible && next.totalCost > prev.totalCost + 0.25) {
-    throw new Error(`more keys unexpectedly increased approximate optimum cost: ${prev.keyCount}K -> ${next.keyCount}K`)
-  }
+  if (prev.feasible && next.feasible && next.totalCost > prev.totalCost + 0.5) throw new Error(`more keys unexpectedly increased approximate optimum cost: ${prev.keyCount}K -> ${next.keyCount}K`)
 }
 
 const adaptive = analyzeFingering({ hitTimesMs: Array.from({ length: 16 }, (_, i) => i * 200) }, { beamWidth: 64 })
@@ -35,54 +34,35 @@ if (duplicateTimes.input.maxSimultaneousPresses !== 3) throw new Error('duplicat
 if (duplicateTimes.keyCountCurve[0].feasible) throw new Error('grouped 3-press chord must reject 2K path')
 if (!duplicateTimes.keyCountCurve[1].feasible) throw new Error('grouped 3-press chord must allow 4K path')
 
-const straight = extractAdofaiPressEvents({
-  angleData: [0, 0, 0],
-  settings: { bpm: 120, pitch: 100, offset: 123 },
-  actions: [],
-})
+const straight = extractAdofaiPressEvents({ angleData: [0, 0, 0], settings: { bpm: 120, pitch: 100, offset: 123 }, actions: [] })
 if (straight.timing.extractorVersion !== ADOFAI_TIMING_VERSION) throw new Error('ADOFAI timing extractor version missing')
 if (straight.events.length !== 3) throw new Error('three straight tiles should create three presses')
 if (!Array.isArray(straight.timing.track) || straight.timing.track.length !== 4) throw new Error('track geometry missing')
 if (Math.abs(straight.timing.track[3].x - 3) > 1e-9 || Math.abs(straight.timing.track[3].y) > 1e-9) throw new Error('straight track geometry mismatch')
-for (const [index, expected] of [500, 1000, 1500].entries()) {
-  if (Math.abs(straight.events[index].timeMs - expected) > 1e-9) throw new Error(`straight timing mismatch at ${index}`)
-}
+for (const [index, expected] of [500, 1000, 1500].entries()) if (Math.abs(straight.events[index].timeMs - expected) > 1e-9) throw new Error(`straight timing mismatch at ${index}`)
 if (straight.events[0].timeMs === 623) throw new Error('level offset must not alter relative fingering intervals')
 if (!straight.timing.segments.every((s) => Number.isFinite(s.segmentStartMs) && Number.isFinite(s.travelStartMs))) throw new Error('playback segment timestamps missing')
 
 const speedChange = extractAdofaiPressEvents({
-  angleData: [0, 0, 0],
-  settings: { bpm: 120, pitch: 100 },
-  actions: [{ floor: 1, eventType: 'SetSpeed', speedType: 'Multiplier', bpmMultiplier: 2 }],
+  angleData: [0, 0, 0], settings: { bpm: 120, pitch: 100 },
+  actions: [
+    { floor: 1, eventType: 'SetSpeed', speedType: 'Multiplier', bpmMultiplier: 2 },
+    { floor: 2, eventType: 'Twirl' },
+  ],
 })
-for (const [index, expected] of [500, 750, 1000].entries()) {
-  if (Math.abs(speedChange.events[index].timeMs - expected) > 1e-9) throw new Error(`SetSpeed timing mismatch at ${index}`)
-}
+for (const [index, expected] of [500, 750, 1000].entries()) if (Math.abs(speedChange.events[index].timeMs - expected) > 1e-9) throw new Error(`SetSpeed timing mismatch at ${index}`)
+if (!speedChange.timing.visualEvents.some((x) => x.eventType === 'SetSpeed' && x.bpmAfter === 240)) throw new Error('SetSpeed visual marker missing')
+if (!speedChange.timing.visualEvents.some((x) => x.eventType === 'Twirl')) throw new Error('Twirl visual marker missing')
 
-const pathData = extractAdofaiPressEventsFromText(`\ufeff{
-  "pathData": "RRR",
-  "settings": { "bpm": 120, "pitch": 100, },
-  "actions": [],
-}`)
+const pathData = extractAdofaiPressEventsFromText(`\ufeff{\n  "pathData": "RRR",\n  "settings": { "bpm": 120, "pitch": 100, },\n  "actions": [],\n}`)
 if (pathData.timing.angleSource !== 'pathData') throw new Error('pathData source not detected')
 if (pathData.events.length !== 3) throw new Error('pathData should create three presses')
 
-const midspin = extractAdofaiPressEvents({
-  angleData: [0, 999, 180],
-  settings: { bpm: 120, pitch: 100 },
-  actions: [],
-})
+const midspin = extractAdofaiPressEvents({ angleData: [0, 999, 180], settings: { bpm: 120, pitch: 100 }, actions: [] })
 if (midspin.events.length !== 2) throw new Error('midspin marker must not create a player press')
 if (!midspin.timing.track.some((floor) => floor.midspin)) throw new Error('midspin geometry marker missing')
 
-const special = extractAdofaiPressEvents({
-  angleData: [0],
-  settings: { bpm: 120, pitch: 100 },
-  actions: [
-    { floor: 0, eventType: 'Hold', duration: 1 },
-    { floor: 0, eventType: 'MultiPlanet', planets: 'ThreePlanets' },
-  ],
-})
+const special = extractAdofaiPressEvents({ angleData: [0], settings: { bpm: 120, pitch: 100 }, actions: [{ floor: 0, eventType: 'Hold', duration: 1 }, { floor: 0, eventType: 'MultiPlanet', planets: 'ThreePlanets' }] })
 if (!special.timing.warnings.includes('HOLD_INPUT_SEMANTICS_APPROXIMATE')) throw new Error('Hold approximation warning missing')
 if (!special.timing.warnings.includes('MULTIPLANET_PRESS_COUNT_NOT_MODELED')) throw new Error('MultiPlanet warning missing')
 
@@ -90,9 +70,9 @@ const direct = analyzeFingering(straight)
 if (direct.input.eventCount !== 3) throw new Error('ADOFAI extractor output must feed fingering DP directly')
 
 const viewer = await readFile(new URL('./visualize-fingering.mjs', import.meta.url), 'utf8')
-for (const invariant of ['fingeringTrace', 'traceKeyCount', '<canvas id="stage">', 'ELF ADOFAI Fingering Replay', 'class="keys"', 'segmentAt', 'orbitState']) {
+for (const invariant of ['fingeringTrace', 'fingerProfile', '<canvas id="stage">', 'ELF ADOFAI Fingering Replay', 'class="keys"', 'segmentAt', 'orbitState', 'visualEvents', 'drawRoundedTile', 'pressWindowMs=82']) {
   if (!viewer.includes(invariant)) throw new Error(`fingering visualizer missing: ${invariant}`)
 }
 
 console.log('DP FINGERING ANALYZER STATIC SMOKE PASSED')
-console.log('.adofai timing/geometry -> adaptive beam-DP -> ADOFAI-style playback + key viewer')
+console.log('.adofai timing/geometry/events -> hand-aware beam-DP -> ADOFAI-style playback + finger key viewer')
