@@ -6,27 +6,102 @@ ELF Analyzer does not automatically decide canonical difficulty. It generates ma
 
 > Analyzer output must never directly create or modify a canonical rating.
 
-## v0.1: DP fingering estimation
+## v0.2: .adofai → timing → DP fingering
 
-The first Analyzer estimates fingering under several key-count assumptions from an input timing sequence.
+The Analyzer can now read an `.adofai` file directly, reconstruct its press timing sequence, then estimate fingering under several key-count assumptions.
 
 ```text
-input timings
+.adofai
+↓
+angleData / pathData
+↓
+Twirl / SetSpeed / pitch / midspin
+↓
+press timings
 ↓
 beam-pruned dynamic programming
 ↓
 2K / 4K / 6K / 8K / 10K / 12K / 16K / 24K ...
 ↓
-minimum estimated cost for each key count
-↓
 key-count curve + warnings
 ```
 
-Very large charts are intentionally analyzed locally in v0.1 rather than inside a Cloudflare Worker, where a large DP workload could hit CPU limits.
+Large charts are still analyzed locally rather than inside a Cloudflare Worker because DP search can become expensive.
 
-## Input
+## Run
 
-v0.1 accepts already extracted input timings rather than parsing an `.adofai` file directly.
+Analyze an `.adofai` file directly:
+
+```powershell
+npm run analyzer:fingering -- .\level.adofai
+```
+
+Write JSON output:
+
+```powershell
+npm run analyzer:fingering -- .\level.adofai .\result.json
+```
+
+The previous extracted-timing JSON format remains supported:
+
+```powershell
+npm run analyzer:fingering -- .\timings.json
+```
+
+## .adofai timing extractor
+
+`adofai-timing-v0.2` currently handles:
+
+- `angleData`
+- legacy `pathData`
+- `Twirl`
+- `SetSpeed`
+  - `Multiplier`
+  - absolute BPM through `beatsPerMinute`
+- `settings.bpm`
+- `settings.pitch`
+- midspin (`999` / `!`)
+- `Pause` duration
+- `Hold` duration as timeline length
+
+It also accepts the trailing commas commonly found in `.adofai` JSON.
+
+`settings.offset` and `countdownTicks` are preserved as playback metadata but are not added to relative fingering intervals.
+
+### Current approximations
+
+`Hold` extends the timing sequence, but the DP does not yet model a finger remaining occupied while the hold is active. Such charts emit:
+
+- `HOLD_INPUT_SEMANTICS_APPROXIMATE`
+
+`MultiPlanet` press multiplicity is not reconstructed yet, so it emits:
+
+- `MULTIPLANET_PRESS_COUNT_NOT_MODELED`
+
+`AutoPlayTiles` is not yet removed from player-input events, so it emits:
+
+- `AUTOPLAY_TILE_INPUT_NOT_MODELED`
+
+Results with these warnings should not be treated as having the same timing fidelity as ordinary charts.
+
+## Timing output
+
+For direct `.adofai` input, Analyzer JSON contains a `timing` section with fields such as:
+
+- `extractorVersion`
+- `angleSource`: `angleData` / `pathData`
+- `pathEntryCount`
+- `pressEventCount`
+- `baseBpm`
+- `pitch`
+- `offsetMs`
+- `warnings`
+- `unsupportedEvents`
+- `segments`
+
+`segments` stores per-segment BPM, travel angle, beat length, and reconstructed hit time for debugging timing reconstruction.
+
+## Direct timing input
 
 Single-press stream:
 
@@ -53,21 +128,9 @@ Explicit simultaneous presses:
 
 Repeated identical values in `hitTimesMs` are grouped as simultaneous presses.
 
-## Run
-
-```powershell
-npm run analyzer:fingering -- .\timings.json
-```
-
-Write the result to a file:
-
-```powershell
-npm run analyzer:fingering -- .\timings.json .\result.json
-```
-
 ## DP state
 
-v0.1 primarily tracks:
+The current model primarily tracks:
 
 - last-use time for every finger/key
 - previous finger
@@ -77,7 +140,7 @@ v0.1 primarily tracks:
 - switch count
 - maximum reuse penalty
 
-Each input expands candidate finger assignments and keeps only the lowest-cost states in a beam. It is therefore deterministic approximate DP rather than exhaustive search.
+Each input expands candidate finger assignments and keeps only the lowest-cost states in a beam. It is deterministic approximate DP rather than exhaustive search.
 
 ## Cost
 
@@ -87,11 +150,9 @@ The current cost function is provisional. It includes:
 - movement distance between finger positions
 - a small extra same-finger transition penalty
 
-The coefficients are intended to be calibrated later using real rater fingering data.
+The coefficients can later be calibrated using real rater fingering data.
 
 ## Key-count curve
-
-The same timing sequence is analyzed for multiple key counts.
 
 ```text
 2K   cost = ...
@@ -106,21 +167,23 @@ The same timing sequence is analyzed for multiple key counts.
 
 The output contains:
 
-- `estimatedMinKeys`: first key count that satisfies the practical threshold
+- `estimatedMinKeys`: first key count satisfying the practical threshold
 - `comfortableKeys`: first key count satisfying the lower comfortable threshold
 - `keyCountCurve`: cost and fingering statistics for every tested key count
 
-These are not difficulty ratings. A chart estimated to require 12K does not automatically map to any specific U-family tier.
+These values are not difficulty ratings.
 
-## Warnings
+## Analyzer warnings
 
-v0.1 can emit:
+The fingering DP can emit:
 
-- `STANDARD_FINGERING_MODEL_OUT_OF_RANGE`: no tested key count up to 10K satisfies the practical threshold
-- `MULTI_KEYBOARD_LIKELY`: the practical threshold first requires at least 11K
-- `EXTREME_KEY_COUNT`: even the largest tested key count misses the practical threshold
-- `HIGH_SIMULTANEOUS_PRESS_COUNT`: a timing contains more than 10 simultaneous presses
-- `BEAM_PRUNED`: candidates were removed by the beam-width limit
+- `STANDARD_FINGERING_MODEL_OUT_OF_RANGE`
+- `MULTI_KEYBOARD_LIKELY`
+- `EXTREME_KEY_COUNT`
+- `HIGH_SIMULTANEOUS_PRESS_COUNT`
+- `BEAM_PRUNED`
+
+Timing-extractor warnings are preserved separately.
 
 ## Analyzer and Rating
 
@@ -140,13 +203,12 @@ The Analyzer does not modify `canonical_ratings`. Future persistence through `an
 
 ## Next steps
 
-After v0.1:
-
-1. accurately extract input timings from `.adofai`
-2. interpret SetSpeed / Twirl / Midspin / MultiPlanet and related events
-3. add local burst / stamina / percentile features
-4. calibrate costs from real fingering data
-5. persist Analyzer results and expose them in Admin
-6. add a P/G/U family classifier and tier regressor
+1. add more timing comparisons against real charts
+2. model finger occupancy for `Hold`
+3. reconstruct `MultiPlanet` input sequences
+4. add local burst / stamina / percentile features
+5. calibrate costs from real fingering data
+6. persist Analyzer results and expose them in Admin
+7. add a P/G/U family classifier and tier regressor
 
 Even after a difficulty model exists, the final canonical rating remains human-controlled.
