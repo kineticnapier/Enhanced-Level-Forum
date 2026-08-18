@@ -10,3 +10,5 @@ wrangler.production.generated.json
 .wrangler-production-secrets.json
 *.log
 .DS_Store
+scripts/analyzer/replay-assets/*
+!scripts/analyzer/replay-assets/README.md
