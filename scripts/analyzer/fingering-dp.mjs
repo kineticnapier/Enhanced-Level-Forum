@@ -1,12 +1,15 @@
-export const FINGERING_MODEL_VERSION = 'fingering-dp-v0.2'
+export const FINGERING_MODEL_VERSION = 'fingering-dp-v0.3'
 
 const DEFAULT_KEY_COUNTS = [2, 4, 6, 8, 10, 12, 16, 24]
 const DEFAULT_OPTIONS = {
   beamWidth: 160,
   reuseWindowMs: 150,
   reuseWeight: 4,
-  movementWeight: 0.18,
-  sameFingerWeight: 0.08,
+  sameFingerWeight: 0.14,
+  sameHandWeight: 0.035,
+  handJumpWeight: 0.16,
+  reversalWeight: 0.12,
+  longRunWeight: 0.025,
   practicalCostPerPress: 0.75,
   comfortableCostPerPress: 0.25,
   fullCurve: false,
@@ -46,8 +49,33 @@ function effectiveBeamWidth(requested, keyCount) {
   return Math.max(32, Math.min(base, Math.floor((base * 8) / keyCount)))
 }
 
+function handProfile(keyCount) {
+  const named = {
+    1: ['RI'],
+    2: ['LI', 'RI'],
+    3: ['LM', 'LI', 'RI'],
+    4: ['LM', 'LI', 'RI', 'RM'],
+    5: ['LR', 'LM', 'LI', 'RI', 'RM'],
+    6: ['LR', 'LM', 'LI', 'RI', 'RM', 'RR'],
+    7: ['LP', 'LR', 'LM', 'LI', 'RI', 'RM', 'RR'],
+    8: ['LP', 'LR', 'LM', 'LI', 'RI', 'RM', 'RR', 'RP'],
+    9: ['LP', 'LR', 'LM', 'LI', 'LT', 'RI', 'RM', 'RR', 'RP'],
+    10: ['LP', 'LR', 'LM', 'LI', 'LT', 'RT', 'RI', 'RM', 'RR', 'RP'],
+  }
+  const labels = named[keyCount] ?? Array.from({ length: keyCount }, (_, i) => {
+    const leftCount = Math.ceil(keyCount / 2)
+    return i < leftCount ? `L${leftCount - i}` : `R${i - leftCount + 1}`
+  })
+  const leftCount = labels.filter((label) => label.startsWith('L')).length
+  return labels.map((label, index) => {
+    const hand = label.startsWith('L') ? 'L' : 'R'
+    const order = hand === 'L' ? index : index - leftCount
+    return { index, label, hand, order }
+  })
+}
+
 function stateKey(state) {
-  return `${state.lastFinger}|${state.lastUse.join(',')}`
+  return `${state.prevFinger}|${state.lastFinger}|${state.sameHandRun}|${state.lastUse.join(',')}`
 }
 
 function keepBest(states, beamWidth) {
@@ -61,7 +89,7 @@ function keepBest(states, beamWidth) {
   return { states: sorted.slice(0, beamWidth), pruned: Math.max(0, sorted.length - beamWidth) }
 }
 
-function transitionCost(state, finger, timeMs, keyCount, options) {
+function transitionCost(state, finger, timeMs, profile, options) {
   const previousUse = state.lastUse[finger]
   let reusePenalty = 0
   let gap = null
@@ -74,33 +102,55 @@ function transitionCost(state, finger, timeMs, keyCount, options) {
     }
   }
 
-  let movementPenalty = 0
-  if (state.lastFinger >= 0 && keyCount > 1) {
-    const distance = Math.abs(finger - state.lastFinger) / (keyCount - 1)
-    movementPenalty = distance * options.movementWeight
+  const current = profile[finger]
+  const last = state.lastFinger >= 0 ? profile[state.lastFinger] : null
+  const prev = state.prevFinger >= 0 ? profile[state.prevFinger] : null
+  const lastGap = state.lastEventTime >= 0 ? Math.max(0, timeMs - state.lastEventTime) : Infinity
+  const fast = Math.max(0, 1 - lastGap / 180)
+
+  let ergonomicPenalty = 0
+  if (last) {
+    if (last.index === current.index) ergonomicPenalty += options.sameFingerWeight
+    if (last.hand === current.hand) {
+      const distance = Math.abs(current.order - last.order)
+      ergonomicPenalty += options.sameHandWeight * fast
+      if (distance > 1) ergonomicPenalty += (distance - 1) * options.handJumpWeight * fast
+
+      if (prev && prev.hand === current.hand && prev.hand === last.hand) {
+        const a = Math.sign(last.order - prev.order)
+        const b = Math.sign(current.order - last.order)
+        if (a !== 0 && b !== 0 && a !== b) ergonomicPenalty += options.reversalWeight * fast
+      }
+      if (state.sameHandRun >= 4) ergonomicPenalty += (state.sameHandRun - 3) * options.longRunWeight * fast
+    }
   }
-  const sameFingerPenalty = state.lastFinger === finger ? options.sameFingerWeight : 0
-  return { total: reusePenalty + movementPenalty + sameFingerPenalty, reusePenalty, gap }
+
+  return { total: reusePenalty + ergonomicPenalty, reusePenalty, ergonomicPenalty, gap }
 }
 
 function initialState(keyCount) {
   return {
     cost: 0,
+    prevFinger: -1,
     lastFinger: -1,
+    lastEventTime: -1,
+    sameHandRun: 0,
     lastUse: Array(keyCount).fill(-1),
     counts: Array(keyCount).fill(0),
     minGap: Array(keyCount).fill(null),
     sameFingerTransitions: 0,
     switches: 0,
+    handSwitches: 0,
     maxReusePenalty: 0,
     trace: null,
   }
 }
 
-function recoverTrace(node) {
+function recoverTrace(node, profile) {
   const out = []
   while (node) {
-    out.push({ timeMs: node.timeMs, finger: node.finger, eventIndex: node.eventIndex, pressIndex: node.pressIndex })
+    const finger = profile[node.finger]
+    out.push({ timeMs: node.timeMs, finger: node.finger, fingerLabel: finger.label, hand: finger.hand, eventIndex: node.eventIndex, pressIndex: node.pressIndex })
     node = node.parent
   }
   out.reverse()
@@ -114,11 +164,12 @@ export function estimateFingeringForKeyCount(rawInput, keyCount, rawOptions = {}
   const options = { ...DEFAULT_OPTIONS, ...rawOptions }
   const beamWidth = effectiveBeamWidth(options.beamWidth, keyCount)
   const collectTrace = options.collectTrace === true
+  const profile = handProfile(keyCount)
 
   const totalPresses = events.reduce((sum, event) => sum + event.presses, 0)
   const maxSimultaneousPresses = events.reduce((max, event) => Math.max(max, event.presses), 0)
   if (maxSimultaneousPresses > keyCount) {
-    return { keyCount, feasible: false, reason: 'SIMULTANEOUS_PRESS_COUNT_EXCEEDS_KEYS', totalCost: null, costPerPress: null, totalPresses, maxSimultaneousPresses, sameFingerRate: null, switchRate: null, maxReusePenalty: null, fingerCounts: null, minGapMsPerFinger: null, prunedStates: 0, beamWidth, fingeringTrace: null }
+    return { keyCount, feasible: false, reason: 'SIMULTANEOUS_PRESS_COUNT_EXCEEDS_KEYS', totalCost: null, costPerPress: null, totalPresses, maxSimultaneousPresses, sameFingerRate: null, switchRate: null, handSwitchRate: null, maxReusePenalty: null, fingerCounts: null, minGapMsPerFinger: null, prunedStates: 0, beamWidth, fingeringTrace: null, fingerProfile: profile }
   }
 
   let beam = [initialState(keyCount)]
@@ -132,15 +183,22 @@ export function estimateFingeringForKeyCount(rawInput, keyCount, rawOptions = {}
       for (const wrapper of chordBeam) {
         for (let finger = 0; finger < keyCount; finger++) {
           if (wrapper.used.includes(finger)) continue
-          const tc = transitionCost(wrapper.state, finger, event.timeMs, keyCount, options)
+          const tc = transitionCost(wrapper.state, finger, event.timeMs, profile, options)
+          const lastProfile = wrapper.state.lastFinger >= 0 ? profile[wrapper.state.lastFinger] : null
+          const currentProfile = profile[finger]
+          const handChanged = lastProfile && lastProfile.hand !== currentProfile.hand
           const next = {
             cost: wrapper.state.cost + tc.total,
+            prevFinger: wrapper.state.lastFinger,
             lastFinger: finger,
+            lastEventTime: event.timeMs,
+            sameHandRun: lastProfile ? (handChanged ? 1 : wrapper.state.sameHandRun + 1) : 1,
             lastUse: wrapper.state.lastUse.slice(),
             counts: wrapper.state.counts.slice(),
             minGap: wrapper.state.minGap.slice(),
             sameFingerTransitions: wrapper.state.sameFingerTransitions + (wrapper.state.lastFinger === finger ? 1 : 0),
             switches: wrapper.state.switches + (wrapper.state.lastFinger >= 0 && wrapper.state.lastFinger !== finger ? 1 : 0),
+            handSwitches: wrapper.state.handSwitches + (handChanged ? 1 : 0),
             maxReusePenalty: Math.max(wrapper.state.maxReusePenalty, tc.reusePenalty),
             trace: collectTrace ? { timeMs: event.timeMs, finger, eventIndex, pressIndex, parent: wrapper.state.trace } : null,
           }
@@ -162,7 +220,7 @@ export function estimateFingeringForKeyCount(rawInput, keyCount, rawOptions = {}
   }
 
   if (!beam.length) {
-    return { keyCount, feasible: false, reason: 'NO_FINGERING_PATH', totalCost: null, costPerPress: null, totalPresses, maxSimultaneousPresses, sameFingerRate: null, switchRate: null, maxReusePenalty: null, fingerCounts: null, minGapMsPerFinger: null, prunedStates, beamWidth, fingeringTrace: null }
+    return { keyCount, feasible: false, reason: 'NO_FINGERING_PATH', totalCost: null, costPerPress: null, totalPresses, maxSimultaneousPresses, sameFingerRate: null, switchRate: null, handSwitchRate: null, maxReusePenalty: null, fingerCounts: null, minGapMsPerFinger: null, prunedStates, beamWidth, fingeringTrace: null, fingerProfile: profile }
   }
 
   const best = beam[0]
@@ -176,12 +234,14 @@ export function estimateFingeringForKeyCount(rawInput, keyCount, rawOptions = {}
     maxSimultaneousPresses,
     sameFingerRate: best.sameFingerTransitions / transitions,
     switchRate: best.switches / transitions,
+    handSwitchRate: best.handSwitches / transitions,
     maxReusePenalty: best.maxReusePenalty,
     fingerCounts: best.counts,
     minGapMsPerFinger: best.minGap,
     prunedStates,
     beamWidth,
-    fingeringTrace: collectTrace ? recoverTrace(best.trace) : null,
+    fingerProfile: profile,
+    fingeringTrace: collectTrace ? recoverTrace(best.trace, profile) : null,
   }
 }
 
@@ -235,8 +295,11 @@ export function analyzeFingering(rawInput, rawOptions = {}) {
       beamWidth: options.beamWidth,
       reuseWindowMs: options.reuseWindowMs,
       reuseWeight: options.reuseWeight,
-      movementWeight: options.movementWeight,
       sameFingerWeight: options.sameFingerWeight,
+      sameHandWeight: options.sameHandWeight,
+      handJumpWeight: options.handJumpWeight,
+      reversalWeight: options.reversalWeight,
+      longRunWeight: options.longRunWeight,
       practicalCostPerPress: options.practicalCostPerPress,
       comfortableCostPerPress: options.comfortableCostPerPress,
     },
@@ -244,8 +307,9 @@ export function analyzeFingering(rawInput, rawOptions = {}) {
     estimatedMinKeys: practical?.keyCount ?? null,
     comfortableKeys: comfortable?.keyCount ?? null,
     traceKeyCount: traced?.keyCount ?? null,
+    fingerProfile: traced?.fingerProfile ?? null,
     fingeringTrace: traced?.fingeringTrace ?? null,
-    traceStats: traced ? { totalCost: traced.totalCost, costPerPress: traced.costPerPress, fingerCounts: traced.fingerCounts, minGapMsPerFinger: traced.minGapMsPerFinger, beamWidth: traced.beamWidth, prunedStates: traced.prunedStates } : null,
+    traceStats: traced ? { totalCost: traced.totalCost, costPerPress: traced.costPerPress, fingerCounts: traced.fingerCounts, minGapMsPerFinger: traced.minGapMsPerFinger, handSwitchRate: traced.handSwitchRate, beamWidth: traced.beamWidth, prunedStates: traced.prunedStates } : null,
     warnings,
     canonicalRatingMutation: false,
   }
