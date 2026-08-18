@@ -1,4 +1,4 @@
-export const ADOFAI_TIMING_VERSION = 'adofai-timing-v0.3'
+export const ADOFAI_TIMING_VERSION = 'adofai-timing-v0.4'
 
 const PATH_ANGLES = {
   R: 0, p: 15, J: 30, E: 45, T: 60, o: 75, U: 90, q: 105,
@@ -161,15 +161,30 @@ export function extractAdofaiPressEvents(level, options = {}) {
   let floorTile = null
   const events = []
   const segments = []
+  const visualEvents = []
 
   for (let sourceFloor = 0; sourceFloor < path.length - 1; sourceFloor++) {
     const segmentStartMs = elapsedMs
     const floorActions = actionsByFloor.get(sourceFloor) ?? []
     let extraBeats = 0
     for (const action of floorActions) {
-      if (action.eventType === 'Twirl') direction *= -1
-      else if (action.eventType === 'SetSpeed') bpm = applySetSpeed(action, bpm, warnings)
-      else if (action.eventType === 'Pause' || action.eventType === 'Hold') {
+      if (action.eventType === 'Twirl') {
+        direction *= -1
+        visualEvents.push({ floor: sourceFloor, eventType: 'Twirl', timeMs: segmentStartMs, directionAfter: direction })
+      } else if (action.eventType === 'SetSpeed') {
+        const bpmBefore = bpm
+        bpm = applySetSpeed(action, bpm, warnings)
+        visualEvents.push({
+          floor: sourceFloor,
+          eventType: 'SetSpeed',
+          timeMs: segmentStartMs,
+          speedType: String(action.speedType ?? ''),
+          bpmMultiplier: finite(action.bpmMultiplier, null),
+          beatsPerMinute: finite(action.beatsPerMinute, null),
+          bpmBefore,
+          bpmAfter: bpm,
+        })
+      } else if (action.eventType === 'Pause' || action.eventType === 'Hold') {
         const duration = finite(action.duration, 0)
         if (duration !== null && duration > 0) extraBeats += duration
       }
@@ -185,18 +200,7 @@ export function extractAdofaiPressEvents(level, options = {}) {
 
     if (next === 999) {
       floorTile = current
-      segments.push({
-        sourceFloor,
-        targetFloor: sourceFloor + 1,
-        midspin: true,
-        bpm,
-        direction,
-        extraBeats,
-        extraMs,
-        segmentStartMs,
-        travelStartMs,
-        hitTimeMs: elapsedMs,
-      })
+      segments.push({ sourceFloor, targetFloor: sourceFloor + 1, midspin: true, bpm, direction, extraBeats, extraMs, segmentStartMs, travelStartMs, hitTimeMs: elapsedMs })
       continue
     }
 
@@ -208,15 +212,7 @@ export function extractAdofaiPressEvents(level, options = {}) {
     const travelMs = travelBeats * beatDurationMs(bpm, pitch)
     elapsedMs += travelMs
 
-    const event = {
-      timeMs: elapsedMs,
-      presses: 1,
-      floor: sourceFloor + 1,
-      travelDegrees,
-      travelBeats,
-      bpm,
-    }
-    events.push(event)
+    events.push({ timeMs: elapsedMs, presses: 1, floor: sourceFloor + 1, travelDegrees, travelBeats, bpm })
     segments.push({
       sourceFloor,
       targetFloor: sourceFloor + 1,
@@ -253,8 +249,9 @@ export function extractAdofaiPressEvents(level, options = {}) {
       warnings: [...new Set(uniqueWarnings)],
       unsupportedEvents,
       track,
+      visualEvents,
       segments: options.includeSegments === false ? undefined : segments,
-      note: 'track/segment data is exposed for ELF playback visualization; offset/countdown are not added to relative fingering intervals',
+      note: 'track/segment/action data is exposed for ELF playback visualization; offset/countdown are not added to relative fingering intervals',
     },
   }
 }
