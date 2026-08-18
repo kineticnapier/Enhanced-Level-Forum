@@ -42,10 +42,13 @@ const straight = extractAdofaiPressEvents({
 })
 if (straight.timing.extractorVersion !== ADOFAI_TIMING_VERSION) throw new Error('ADOFAI timing extractor version missing')
 if (straight.events.length !== 3) throw new Error('three straight tiles should create three presses')
+if (!Array.isArray(straight.timing.track) || straight.timing.track.length !== 4) throw new Error('track geometry missing')
+if (Math.abs(straight.timing.track[3].x - 3) > 1e-9 || Math.abs(straight.timing.track[3].y) > 1e-9) throw new Error('straight track geometry mismatch')
 for (const [index, expected] of [500, 1000, 1500].entries()) {
   if (Math.abs(straight.events[index].timeMs - expected) > 1e-9) throw new Error(`straight timing mismatch at ${index}`)
 }
 if (straight.events[0].timeMs === 623) throw new Error('level offset must not alter relative fingering intervals')
+if (!straight.timing.segments.every((s) => Number.isFinite(s.segmentStartMs) && Number.isFinite(s.travelStartMs))) throw new Error('playback segment timestamps missing')
 
 const speedChange = extractAdofaiPressEvents({
   angleData: [0, 0, 0],
@@ -70,6 +73,7 @@ const midspin = extractAdofaiPressEvents({
   actions: [],
 })
 if (midspin.events.length !== 2) throw new Error('midspin marker must not create a player press')
+if (!midspin.timing.track.some((floor) => floor.midspin)) throw new Error('midspin geometry marker missing')
 
 const special = extractAdofaiPressEvents({
   angleData: [0],
@@ -86,9 +90,9 @@ const direct = analyzeFingering(straight)
 if (direct.input.eventCount !== 3) throw new Error('ADOFAI extractor output must feed fingering DP directly')
 
 const viewer = await readFile(new URL('./visualize-fingering.mjs', import.meta.url), 'utf8')
-for (const invariant of ['fingeringTrace', 'traceKeyCount', '<canvas id="chart">', 'visible presses']) {
+for (const invariant of ['fingeringTrace', 'traceKeyCount', '<canvas id="stage">', 'ELF ADOFAI Fingering Replay', 'class="keys"', 'segmentAt', 'orbitState']) {
   if (!viewer.includes(invariant)) throw new Error(`fingering visualizer missing: ${invariant}`)
 }
 
 console.log('DP FINGERING ANALYZER STATIC SMOKE PASSED')
-console.log('.adofai timing -> adaptive beam-DP -> best fingering trace -> standalone HTML visualizer')
+console.log('.adofai timing/geometry -> adaptive beam-DP -> ADOFAI-style playback + key viewer')
