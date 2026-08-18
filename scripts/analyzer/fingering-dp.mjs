@@ -1,4 +1,4 @@
-export const FINGERING_MODEL_VERSION = 'fingering-dp-v0.1'
+export const FINGERING_MODEL_VERSION = 'fingering-dp-v0.2'
 
 const DEFAULT_KEY_COUNTS = [2, 4, 6, 8, 10, 12, 16, 24]
 const DEFAULT_OPTIONS = {
@@ -9,6 +9,8 @@ const DEFAULT_OPTIONS = {
   sameFingerWeight: 0.08,
   practicalCostPerPress: 0.75,
   comfortableCostPerPress: 0.25,
+  fullCurve: false,
+  collectTrace: false,
 }
 
 function finiteNumber(value, name) {
@@ -34,12 +36,14 @@ function normalizeEvents(input) {
   } else {
     throw new Error('Provide events[] or hitTimesMs[]')
   }
-
   events.sort((a, b) => a.timeMs - b.timeMs)
-  for (let i = 1; i < events.length; i++) {
-    if (events[i].timeMs < events[i - 1].timeMs) throw new Error('events must be sortable by time')
-  }
   return events
+}
+
+function effectiveBeamWidth(requested, keyCount) {
+  const base = Math.max(1, Math.min(2048, Math.trunc(finiteNumber(requested, 'beamWidth'))))
+  if (keyCount <= 8) return base
+  return Math.max(32, Math.min(base, Math.floor((base * 8) / keyCount)))
 }
 
 function stateKey(state) {
@@ -89,7 +93,18 @@ function initialState(keyCount) {
     sameFingerTransitions: 0,
     switches: 0,
     maxReusePenalty: 0,
+    trace: null,
   }
+}
+
+function recoverTrace(node) {
+  const out = []
+  while (node) {
+    out.push({ timeMs: node.timeMs, finger: node.finger, eventIndex: node.eventIndex, pressIndex: node.pressIndex })
+    node = node.parent
+  }
+  out.reverse()
+  return out
 }
 
 export function estimateFingeringForKeyCount(rawInput, keyCount, rawOptions = {}) {
@@ -97,55 +112,26 @@ export function estimateFingeringForKeyCount(rawInput, keyCount, rawOptions = {}
   keyCount = Math.trunc(finiteNumber(keyCount, 'keyCount'))
   if (keyCount < 1 || keyCount > 64) throw new Error('keyCount must be between 1 and 64')
   const options = { ...DEFAULT_OPTIONS, ...rawOptions }
-  options.beamWidth = Math.max(1, Math.min(2048, Math.trunc(finiteNumber(options.beamWidth, 'beamWidth'))))
+  const beamWidth = effectiveBeamWidth(options.beamWidth, keyCount)
+  const collectTrace = options.collectTrace === true
 
   const totalPresses = events.reduce((sum, event) => sum + event.presses, 0)
   const maxSimultaneousPresses = events.reduce((max, event) => Math.max(max, event.presses), 0)
-  if (!totalPresses) {
-    return {
-      keyCount,
-      feasible: true,
-      totalCost: 0,
-      costPerPress: 0,
-      totalPresses: 0,
-      maxSimultaneousPresses: 0,
-      sameFingerRate: 0,
-      switchRate: 0,
-      maxReusePenalty: 0,
-      fingerCounts: Array(keyCount).fill(0),
-      minGapMsPerFinger: Array(keyCount).fill(null),
-      prunedStates: 0,
-    }
-  }
   if (maxSimultaneousPresses > keyCount) {
-    return {
-      keyCount,
-      feasible: false,
-      reason: 'SIMULTANEOUS_PRESS_COUNT_EXCEEDS_KEYS',
-      totalCost: null,
-      costPerPress: null,
-      totalPresses,
-      maxSimultaneousPresses,
-      sameFingerRate: null,
-      switchRate: null,
-      maxReusePenalty: null,
-      fingerCounts: null,
-      minGapMsPerFinger: null,
-      prunedStates: 0,
-    }
+    return { keyCount, feasible: false, reason: 'SIMULTANEOUS_PRESS_COUNT_EXCEEDS_KEYS', totalCost: null, costPerPress: null, totalPresses, maxSimultaneousPresses, sameFingerRate: null, switchRate: null, maxReusePenalty: null, fingerCounts: null, minGapMsPerFinger: null, prunedStates: 0, beamWidth, fingeringTrace: null }
   }
 
   let beam = [initialState(keyCount)]
   let prunedStates = 0
 
-  for (const event of events) {
+  for (let eventIndex = 0; eventIndex < events.length; eventIndex++) {
+    const event = events[eventIndex]
     let chordBeam = beam.map((state) => ({ state, used: [] }))
-    for (let press = 0; press < event.presses; press++) {
+    for (let pressIndex = 0; pressIndex < event.presses; pressIndex++) {
       const candidates = []
       for (const wrapper of chordBeam) {
-        const usedSet = new Set(wrapper.used)
         for (let finger = 0; finger < keyCount; finger++) {
-          if (usedSet.has(finger)) continue
+          if (wrapper.used.includes(finger)) continue
           const tc = transitionCost(wrapper.state, finger, event.timeMs, keyCount, options)
           const next = {
             cost: wrapper.state.cost + tc.total,
@@ -156,6 +142,7 @@ export function estimateFingeringForKeyCount(rawInput, keyCount, rawOptions = {}
             sameFingerTransitions: wrapper.state.sameFingerTransitions + (wrapper.state.lastFinger === finger ? 1 : 0),
             switches: wrapper.state.switches + (wrapper.state.lastFinger >= 0 && wrapper.state.lastFinger !== finger ? 1 : 0),
             maxReusePenalty: Math.max(wrapper.state.maxReusePenalty, tc.reusePenalty),
+            trace: collectTrace ? { timeMs: event.timeMs, finger, eventIndex, pressIndex, parent: wrapper.state.trace } : null,
           }
           next.lastUse[finger] = event.timeMs
           next.counts[finger]++
@@ -164,32 +151,18 @@ export function estimateFingeringForKeyCount(rawInput, keyCount, rawOptions = {}
         }
       }
       candidates.sort((a, b) => a.state.cost - b.state.cost)
-      if (candidates.length > options.beamWidth) prunedStates += candidates.length - options.beamWidth
-      chordBeam = candidates.slice(0, options.beamWidth)
+      if (candidates.length > beamWidth) prunedStates += candidates.length - beamWidth
+      chordBeam = candidates.slice(0, beamWidth)
       if (!chordBeam.length) break
     }
-    const compact = keepBest(chordBeam.map((wrapper) => wrapper.state), options.beamWidth)
+    const compact = keepBest(chordBeam.map((wrapper) => wrapper.state), beamWidth)
     prunedStates += compact.pruned
     beam = compact.states
     if (!beam.length) break
   }
 
   if (!beam.length) {
-    return {
-      keyCount,
-      feasible: false,
-      reason: 'NO_FINGERING_PATH',
-      totalCost: null,
-      costPerPress: null,
-      totalPresses,
-      maxSimultaneousPresses,
-      sameFingerRate: null,
-      switchRate: null,
-      maxReusePenalty: null,
-      fingerCounts: null,
-      minGapMsPerFinger: null,
-      prunedStates,
-    }
+    return { keyCount, feasible: false, reason: 'NO_FINGERING_PATH', totalCost: null, costPerPress: null, totalPresses, maxSimultaneousPresses, sameFingerRate: null, switchRate: null, maxReusePenalty: null, fingerCounts: null, minGapMsPerFinger: null, prunedStates, beamWidth, fingeringTrace: null }
   }
 
   const best = beam[0]
@@ -198,7 +171,7 @@ export function estimateFingeringForKeyCount(rawInput, keyCount, rawOptions = {}
     keyCount,
     feasible: true,
     totalCost: best.cost,
-    costPerPress: best.cost / totalPresses,
+    costPerPress: totalPresses ? best.cost / totalPresses : 0,
     totalPresses,
     maxSimultaneousPresses,
     sameFingerRate: best.sameFingerTransitions / transitions,
@@ -207,28 +180,39 @@ export function estimateFingeringForKeyCount(rawInput, keyCount, rawOptions = {}
     fingerCounts: best.counts,
     minGapMsPerFinger: best.minGap,
     prunedStates,
+    beamWidth,
+    fingeringTrace: collectTrace ? recoverTrace(best.trace) : null,
   }
 }
 
 export function analyzeFingering(rawInput, rawOptions = {}) {
   const events = normalizeEvents(rawInput)
   const options = { ...DEFAULT_OPTIONS, ...rawOptions }
+  const explicitKeyCounts = Array.isArray(rawInput?.keyCounts)
   const keyCounts = (rawInput?.keyCounts ?? DEFAULT_KEY_COUNTS)
     .map((value, index) => Math.trunc(finiteNumber(value, `keyCounts[${index}]`)))
     .filter((value, index, values) => value >= 1 && value <= 64 && values.indexOf(value) === index)
     .sort((a, b) => a - b)
   if (!keyCounts.length) throw new Error('At least one keyCount is required')
 
-  const curve = keyCounts.map((keyCount) => estimateFingeringForKeyCount({ events }, keyCount, options))
+  const curve = []
+  for (const keyCount of keyCounts) {
+    const point = estimateFingeringForKeyCount({ events }, keyCount, { ...options, collectTrace: false })
+    curve.push(point)
+    if (!explicitKeyCounts && options.fullCurve !== true && point.feasible && point.costPerPress <= options.comfortableCostPerPress) break
+  }
+
   const practical = curve.find((point) => point.feasible && point.costPerPress <= options.practicalCostPerPress) ?? null
   const comfortable = curve.find((point) => point.feasible && point.costPerPress <= options.comfortableCostPerPress) ?? null
+  const traceKeyCount = Number.isFinite(Number(rawInput?.traceKeyCount)) ? Math.trunc(Number(rawInput.traceKeyCount)) : (comfortable?.keyCount ?? practical?.keyCount ?? curve.find((point) => point.feasible)?.keyCount ?? null)
+  const traced = traceKeyCount ? estimateFingeringForKeyCount({ events }, traceKeyCount, { ...options, collectTrace: true }) : null
   const standard10 = curve.find((point) => point.keyCount <= 10 && point.feasible && point.costPerPress <= options.practicalCostPerPress) ?? null
   const warnings = []
-  if (!standard10) warnings.push('STANDARD_FINGERING_MODEL_OUT_OF_RANGE')
+  if (!standard10 && curve.some((point) => point.keyCount >= 10)) warnings.push('STANDARD_FINGERING_MODEL_OUT_OF_RANGE')
   if (practical && practical.keyCount > 10) warnings.push('MULTI_KEYBOARD_LIKELY')
-  if (!practical) warnings.push('EXTREME_KEY_COUNT')
+  if (!practical && curve[curve.length - 1]?.keyCount === keyCounts[keyCounts.length - 1]) warnings.push('EXTREME_KEY_COUNT')
   if (events.some((event) => event.presses > 10)) warnings.push('HIGH_SIMULTANEOUS_PRESS_COUNT')
-  if (curve.some((point) => point.prunedStates > 0)) warnings.push('BEAM_PRUNED')
+  if (curve.some((point) => point.prunedStates > 0) || (traced?.prunedStates ?? 0) > 0) warnings.push('BEAM_PRUNED')
 
   return {
     analyzer: 'ELF Fingering Analyzer',
@@ -245,7 +229,9 @@ export function analyzeFingering(rawInput, rawOptions = {}) {
       maxSimultaneousPresses: events.reduce((max, event) => Math.max(max, event.presses), 0),
     },
     config: {
-      keyCounts,
+      requestedKeyCounts: keyCounts,
+      analyzedKeyCounts: curve.map((point) => point.keyCount),
+      adaptiveStop: !explicitKeyCounts && options.fullCurve !== true,
       beamWidth: options.beamWidth,
       reuseWindowMs: options.reuseWindowMs,
       reuseWeight: options.reuseWeight,
@@ -257,6 +243,9 @@ export function analyzeFingering(rawInput, rawOptions = {}) {
     keyCountCurve: curve,
     estimatedMinKeys: practical?.keyCount ?? null,
     comfortableKeys: comfortable?.keyCount ?? null,
+    traceKeyCount: traced?.keyCount ?? null,
+    fingeringTrace: traced?.fingeringTrace ?? null,
+    traceStats: traced ? { totalCost: traced.totalCost, costPerPress: traced.costPerPress, fingerCounts: traced.fingerCounts, minGapMsPerFinger: traced.minGapMsPerFinger, beamWidth: traced.beamWidth, prunedStates: traced.prunedStates } : null,
     warnings,
     canonicalRatingMutation: false,
   }
