@@ -28,6 +28,7 @@
     "auth:create-admin": "node scripts/create-admin.mjs",
     "import:tuf": "node scripts/import-tuf.mjs",
     "analyzer:fingering": "node scripts/analyze-fingering.mjs",
+    "analyzer:fingering:view": "node scripts/visualize-fingering.mjs",
     "smoke": "node scripts/run-parallel.mjs smoke:core smoke:public smoke:auth smoke:deploy smoke:i18n smoke:cron smoke:metadata smoke:rating-queue smoke:submissions smoke:level-variants smoke:analyzer",
     "smoke:core": "node scripts/smoke.mjs",
     "smoke:public": "node scripts/smoke-public.mjs",
