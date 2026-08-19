@@ -6,9 +6,49 @@ ELF Analyzerは、確定難易度を自動決定する機能ではありませ�
 
 > Analyzer output must never directly create or modify a canonical rating.
 
-## v0.2: .adofai → 入力時刻 → DP運指推定
+## ワンコマンド解析
 
-現在のAnalyzerは `.adofai` を直接読み込み、譜面の入力時刻を復元してから複数キー数で運指を推定します。
+`.adofai` は1コマンドで、タイミング抽出・運指解析・JSON保存・リプレイHTML生成まで実行できます。
+
+```powershell
+npm run analyzer:fingering -- .\WYSI.adofai
+```
+
+入力ファイルと同じディレクトリに自動で生成します。
+
+```text
+WYSI.adofai
+WYSI-result.json
+WYSI-replay.html
+```
+
+リプレイ用Texture2Dは次の順で自動検出します。
+
+1. `ELF_ADOFAI_ASSETS` 環境変数
+2. `.adofai` と同じ場所の `Texture2D/`
+3. `.adofai` と同じディレクトリ
+4. カレントディレクトリの `Texture2D/`
+5. カレントディレクトリ
+6. `scripts/analyzer/replay-assets/`
+
+見つからなければベクター表示へ自動フォールバックします。
+
+必要な場合だけ明示指定できます。
+
+```powershell
+npm run analyzer:fingering -- .\WYSI.adofai --assets "C:\path\to\Texture2D"
+npm run analyzer:fingering -- .\WYSI.adofai --output-dir .\analysis
+npm run analyzer:fingering -- .\WYSI.adofai --html .\custom-replay.html
+npm run analyzer:fingering -- .\WYSI.adofai --no-view
+```
+
+既存の第2位置引数によるJSON出力先指定も互換維持しています。
+
+```powershell
+npm run analyzer:fingering -- .\WYSI.adofai .\custom-result.json
+```
+
+## 処理フロー
 
 ```text
 .adofai
@@ -17,40 +57,35 @@ angleData / pathData
 ↓
 Twirl / SetSpeed / pitch / midspin
 ↓
-入力時刻列
+入力時刻列 + track geometry
 ↓
-beam-pruned dynamic programming
+local-peak-aware hand DP
 ↓
-2K / 4K / 6K / 8K / 10K / 12K / 16K / 24K ...
+2K → 3K → 4K → 6K → 8K → 10K → 12K → 16K → 24K
 ↓
-key-count curve + warnings
+result JSON + replay HTML
 ```
 
-巨大譜面ではDP探索量が大きくなるため、現段階ではCloudflare WorkerではなくローカルCLIで実行します。
+5K / 7K は明示指定時のみ利用でき、自動探索のbridge pointには使いません。
 
-## 実行
+## 運指モデル
 
-`.adofai` を直接解析できます。
+現在の標準プロファイルでは、2キー交互は `LI / RI` を優先し、3Kは `LI / RI / RM` を使います。高速な3連系は3本の指を使うロールとして扱えるようにしています。
 
-```powershell
-npm run analyzer:fingering -- .\level.adofai
-```
+DPは主に次を保持します。
 
-結果をJSONへ保存する場合:
+- 各指の最終使用時刻
+- 直前とその前に使った指
+- 左右の手
+- 同一手の連続長
+- 各指の使用回数と最小再使用間隔
+- 短い局所窓のコスト
 
-```powershell
-npm run analyzer:fingering -- .\level.adofai .\result.json
-```
-
-従来の抽出済みtiming JSONも引き続き利用できます。
-
-```powershell
-npm run analyzer:fingering -- .\timings.json
-```
+出力では全体平均 `costPerPress` に加えて `peakLocalCostPerPress` を保存します。これにより、譜面全体では4Kの平均負荷が低くても、一部のburstが6Kで大幅に改善する場合は「4Kで十分」と早期判定しにくくしています。
 
 ## .adofai timing extractor
 
-`adofai-timing-v0.2` は次を処理します。
+現在のextractorは次を処理します。
 
 - `angleData`
 - 旧形式 `pathData`
@@ -70,55 +105,43 @@ npm run analyzer:fingering -- .\timings.json
 
 ### 現在の近似
 
-`Hold` は次の入力までの時間には反映しますが、「どの指を何ms押し続けるか」という占有状態はまだDPに入れていません。そのため:
+`Hold` は次の入力までの時間には反映しますが、指の占有状態はまだDPに入れていません。そのため `HOLD_INPUT_SEMANTICS_APPROXIMATE` を出します。
 
-- `HOLD_INPUT_SEMANTICS_APPROXIMATE`
+`MultiPlanet` は必要入力数を正確に復元していないため `MULTIPLANET_PRESS_COUNT_NOT_MODELED`、`AutoPlayTiles` は自動入力区間をまだ除外していないため `AUTOPLAY_TILE_INPUT_NOT_MODELED` を出します。
 
-を出します。
+## リプレイ
 
-`MultiPlanet` は現時点で必要入力数を正確に復元していないため:
+リプレイHTMLはstandaloneです。以下を表示します。
 
-- `MULTIPLANET_PRESS_COUNT_NOT_MODELED`
+- 譜面トラック
+- 現在floorへのカメラ追従
+- 赤/青惑星
+- Twirl / SetSpeed
+- BPM / direction / floor
+- DP推定のキービューワー
+- 再生、一時停止、シーク、速度、ズーム
 
-を出します。
+ローカルのゲームTexture2Dが利用できる場合は、床・惑星・Twirl・速度変化アイコンをHTMLへ埋め込みます。ゲーム素材自体はELF repoにはコミットしません。
 
-`AutoPlayTiles` も自動入力区間をまだ除外していないため:
+主に利用するファイル:
 
-- `AUTOPLAY_TILE_INPUT_NOT_MODELED`
+- `tile_unlit.png`
+- `planet-red.png`
+- `planet-blue.png`
+- `swirl_red.png`
+- `swirl_blue.png`
+- `SetSpeed.png`
+- `SpeedDown.png`
+- `tile_samespeed.png`
 
-を出します。
+## 直接timing JSON入力
 
-これらのwarningがある結果は、通常譜面と同じ精度として扱わない前提です。
-
-## timing出力
-
-`.adofai` 入力時はAnalyzer JSONに `timing` が追加されます。
-
-主なフィールド:
-
-- `extractorVersion`
-- `angleSource`: `angleData` / `pathData`
-- `pathEntryCount`
-- `pressEventCount`
-- `baseBpm`
-- `pitch`
-- `offsetMs`
-- `warnings`
-- `unsupportedEvents`
-- `segments`
-
-`segments` には各区間のBPM、移動角度、beat長、hit時刻などを保存するため、タイミング復元のデバッグにも使えます。
-
-## 直接timing入力
-
-単押し列:
+抽出済みtiming JSONも引き続き利用できます。この場合、出力先を指定しなければ従来通りstdoutへJSONを出します。
 
 ```json
 {
-  "levelVersionId": "optional-version-id",
-  "sha256": "optional-sha256",
   "hitTimesMs": [0, 100, 200, 300],
-  "keyCounts": [2, 4, 6, 8, 10, 12, 16, 24]
+  "keyCounts": [2, 3, 4, 6, 8]
 }
 ```
 
@@ -133,65 +156,6 @@ npm run analyzer:fingering -- .\timings.json
   ]
 }
 ```
-
-`hitTimesMs`で同じ時刻が複数回現れた場合も同時押しとしてまとめられます。
-
-## DP状態
-
-現在の状態は主に次を保持します。
-
-- 各指/キーが最後に使われた時刻
-- 直前に使った指
-- 各指の使用回数
-- 各指の最小再使用間隔
-- 同指連続回数
-- 指切り替え回数
-- 最大再使用ペナルティ
-
-各入力に対して候補指へ遷移し、低コスト状態だけをbeamに残します。そのため厳密な全探索ではなく、決定論的な近似DPです。
-
-## コスト
-
-現在のコストは仮仕様です。主に次を含みます。
-
-- 短時間で同じ指を再使用するペナルティ
-- 指位置の移動距離
-- 同じ指を連続使用する小さな追加ペナルティ
-
-この係数は将来、実際のRater運指データから調整します。
-
-## key-count curve
-
-```text
-2K   cost = ...
-4K   cost = ...
-6K   cost = ...
-8K   cost = ...
-10K  cost = ...
-12K  cost = ...
-16K  cost = ...
-24K  cost = ...
-```
-
-出力には次が含まれます。
-
-- `estimatedMinKeys`: practical thresholdを初めて満たすキー数
-- `comfortableKeys`: より低いcomfortable thresholdを初めて満たすキー数
-- `keyCountCurve`: 各キー数のコストと運指統計
-
-これらは難易度そのものではありません。
-
-## Analyzer warnings
-
-運指DP側では次の警告を出せます。
-
-- `STANDARD_FINGERING_MODEL_OUT_OF_RANGE`
-- `MULTI_KEYBOARD_LIKELY`
-- `EXTREME_KEY_COUNT`
-- `HIGH_SIMULTANEOUS_PRESS_COUNT`
-- `BEAM_PRUNED`
-
-Timing extractor側のwarningとは別に保持されます。
 
 ## AnalyzerとRating
 
@@ -208,17 +172,3 @@ Level
 ```
 
 Analyzerは`canonical_ratings`を書き換えません。将来`analyzer_runs` / `analyzer_predictions`へ保存する場合も、この原則を維持します。
-
-## 今後
-
-次に必要なもの:
-
-1. 実譜面とのタイミング照合テストを増やす
-2. `Hold` の指占有状態
-3. `MultiPlanet` の入力列復元
-4. 局所burst / stamina / percentile feature
-5. 実際の運指データによるコスト校正
-6. Analyzer結果のDB保存とAdmin表示
-7. P/G/U family classifier + tier regressor
-
-難易度モデルを追加しても、確定難易度の最終決定は人間側に残します。
