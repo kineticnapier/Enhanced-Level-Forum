@@ -2,13 +2,53 @@
 
 [日本語](../ANALYZER.md)
 
-ELF Analyzer does not automatically decide canonical difficulty. It generates machine-derived evidence for a specific Version to assist human rating.
+ELF Analyzer does not automatically decide the canonical difficulty. It produces machine-generated evidence for a LevelVersion so human raters can inspect it.
 
 > Analyzer output must never directly create or modify a canonical rating.
 
-## v0.2: .adofai → timing → DP fingering
+## One-command analysis
 
-The Analyzer can now read an `.adofai` file directly, reconstruct its press timing sequence, then estimate fingering under several key-count assumptions.
+A `.adofai` file can now be processed end-to-end with one command:
+
+```powershell
+npm run analyzer:fingering -- .\WYSI.adofai
+```
+
+The analyzer automatically creates sibling outputs:
+
+```text
+WYSI.adofai
+WYSI-result.json
+WYSI-replay.html
+```
+
+Replay Texture2D assets are auto-detected in this order:
+
+1. `ELF_ADOFAI_ASSETS`
+2. `Texture2D/` next to the `.adofai`
+3. the `.adofai` directory itself
+4. `Texture2D/` under the current working directory
+5. the current working directory
+6. `scripts/analyzer/replay-assets/`
+
+If no game textures are found, the replay automatically falls back to vector rendering.
+
+Overrides remain available when needed:
+
+```powershell
+npm run analyzer:fingering -- .\WYSI.adofai --assets "C:\path\to\Texture2D"
+npm run analyzer:fingering -- .\WYSI.adofai --output-dir .\analysis
+npm run analyzer:fingering -- .\WYSI.adofai --html .\custom-replay.html
+npm run analyzer:fingering -- .\WYSI.adofai --no-view
+```
+
+The legacy positional JSON output argument is still supported:
+
+```powershell
+npm run analyzer:fingering -- .\WYSI.adofai .\custom-result.json
+```
+
+## Pipeline
 
 ```text
 .adofai
@@ -17,104 +57,95 @@ angleData / pathData
 ↓
 Twirl / SetSpeed / pitch / midspin
 ↓
-press timings
+press timing + track geometry
 ↓
-beam-pruned dynamic programming
+local-peak-aware hand DP
 ↓
-2K / 4K / 6K / 8K / 10K / 12K / 16K / 24K ...
+2K → 3K → 4K → 6K → 8K → 10K → 12K → 16K → 24K
 ↓
-key-count curve + warnings
+result JSON + replay HTML
 ```
 
-Large charts are still analyzed locally rather than inside a Cloudflare Worker because DP search can become expensive.
+5K and 7K remain available when explicitly requested, but are not automatic bridge points.
 
-## Run
+## Fingering model
 
-Analyze an `.adofai` file directly:
+The current standard profile prefers `LI / RI` for moderate two-key alternation. 3K uses `LI / RI / RM`, allowing fast triplet-like streams to be represented as a genuine three-key roll.
 
-```powershell
-npm run analyzer:fingering -- .\level.adofai
-```
+The DP tracks, among other state:
 
-Write JSON output:
+- last use time for each finger
+- the previous two fingers
+- left/right hand assignment
+- same-hand run length
+- per-finger usage and minimum reuse gap
+- rolling local transition cost
 
-```powershell
-npm run analyzer:fingering -- .\level.adofai .\result.json
-```
+In addition to overall `costPerPress`, each result records `peakLocalCostPerPress`. This helps prevent a chart from being considered comfortable at 4K merely because most of the chart is easy when a short burst becomes substantially easier at 6K.
 
-The previous extracted-timing JSON format remains supported:
+## ADOFAI timing extraction
 
-```powershell
-npm run analyzer:fingering -- .\timings.json
-```
-
-## .adofai timing extractor
-
-`adofai-timing-v0.2` currently handles:
+The timing extractor currently handles:
 
 - `angleData`
 - legacy `pathData`
 - `Twirl`
 - `SetSpeed`
-  - `Multiplier`
-  - absolute BPM through `beatsPerMinute`
+  - multiplier
+  - absolute BPM (`beatsPerMinute`)
 - `settings.bpm`
 - `settings.pitch`
 - midspin (`999` / `!`)
 - `Pause` duration
 - `Hold` duration as timeline length
 
-It also accepts the trailing commas commonly found in `.adofai` JSON.
+Trailing commas in `.adofai` JSON are accepted.
 
-`settings.offset` and `countdownTicks` are preserved as playback metadata but are not added to relative fingering intervals.
+`settings.offset` and `countdownTicks` remain metadata and are not added to relative fingering intervals.
 
 ### Current approximations
 
-`Hold` extends the timing sequence, but the DP does not yet model a finger remaining occupied while the hold is active. Such charts emit:
+`Hold` timing is represented but finger occupancy is not yet modeled, so the extractor emits `HOLD_INPUT_SEMANTICS_APPROXIMATE`.
 
-- `HOLD_INPUT_SEMANTICS_APPROXIMATE`
+`MultiPlanet` emits `MULTIPLANET_PRESS_COUNT_NOT_MODELED`, and `AutoPlayTiles` emits `AUTOPLAY_TILE_INPUT_NOT_MODELED` while their exact input semantics remain unmodeled.
 
-`MultiPlanet` press multiplicity is not reconstructed yet, so it emits:
+## Replay
 
-- `MULTIPLANET_PRESS_COUNT_NOT_MODELED`
+The generated HTML is standalone and includes:
 
-`AutoPlayTiles` is not yet removed from player-input events, so it emits:
+- chart track
+- camera following the current floor
+- red/blue planets
+- Twirl / SetSpeed markers
+- BPM / direction / floor HUD
+- DP-estimated key viewer
+- play, pause, seek, speed and zoom controls
 
-- `AUTOPLAY_TILE_INPUT_NOT_MODELED`
+When local game Texture2D exports are available, tile, planet, Twirl and speed-change textures are embedded into the HTML. Game assets themselves are not committed to the ELF repository.
 
-Results with these warnings should not be treated as having the same timing fidelity as ordinary charts.
+Primary optional files:
 
-## Timing output
+- `tile_unlit.png`
+- `planet-red.png`
+- `planet-blue.png`
+- `swirl_red.png`
+- `swirl_blue.png`
+- `SetSpeed.png`
+- `SpeedDown.png`
+- `tile_samespeed.png`
 
-For direct `.adofai` input, Analyzer JSON contains a `timing` section with fields such as:
+## Direct timing JSON input
 
-- `extractorVersion`
-- `angleSource`: `angleData` / `pathData`
-- `pathEntryCount`
-- `pressEventCount`
-- `baseBpm`
-- `pitch`
-- `offsetMs`
-- `warnings`
-- `unsupportedEvents`
-- `segments`
-
-`segments` stores per-segment BPM, travel angle, beat length, and reconstructed hit time for debugging timing reconstruction.
-
-## Direct timing input
-
-Single-press stream:
+Pre-extracted timing JSON remains supported. Without an output path, JSON inputs retain the previous stdout behavior.
 
 ```json
 {
-  "levelVersionId": "optional-version-id",
-  "sha256": "optional-sha256",
   "hitTimesMs": [0, 100, 200, 300],
-  "keyCounts": [2, 4, 6, 8, 10, 12, 16, 24]
+  "keyCounts": [2, 3, 4, 6, 8]
 }
 ```
 
-Explicit simultaneous presses:
+Explicit simultaneous presses can use:
 
 ```json
 {
@@ -126,68 +157,9 @@ Explicit simultaneous presses:
 }
 ```
 
-Repeated identical values in `hitTimesMs` are grouped as simultaneous presses.
-
-## DP state
-
-The current model primarily tracks:
-
-- last-use time for every finger/key
-- previous finger
-- use count per finger
-- minimum reuse interval per finger
-- same-finger transition count
-- switch count
-- maximum reuse penalty
-
-Each input expands candidate finger assignments and keeps only the lowest-cost states in a beam. It is deterministic approximate DP rather than exhaustive search.
-
-## Cost
-
-The current cost function is provisional. It includes:
-
-- a penalty for reusing one finger after a short interval
-- movement distance between finger positions
-- a small extra same-finger transition penalty
-
-The coefficients can later be calibrated using real rater fingering data.
-
-## Key-count curve
-
-```text
-2K   cost = ...
-4K   cost = ...
-6K   cost = ...
-8K   cost = ...
-10K  cost = ...
-12K  cost = ...
-16K  cost = ...
-24K  cost = ...
-```
-
-The output contains:
-
-- `estimatedMinKeys`: first key count satisfying the practical threshold
-- `comfortableKeys`: first key count satisfying the lower comfortable threshold
-- `keyCountCurve`: cost and fingering statistics for every tested key count
-
-These values are not difficulty ratings.
-
-## Analyzer warnings
-
-The fingering DP can emit:
-
-- `STANDARD_FINGERING_MODEL_OUT_OF_RANGE`
-- `MULTI_KEYBOARD_LIKELY`
-- `EXTREME_KEY_COUNT`
-- `HIGH_SIMULTANEOUS_PRESS_COUNT`
-- `BEAM_PRUNED`
-
-Timing-extractor warnings are preserved separately.
-
 ## Analyzer and Rating
 
-Analyzer output is Version-specific evidence.
+Analyzer results are evidence attached to a Version:
 
 ```text
 Level
@@ -199,16 +171,4 @@ Level
       └─ Analyzer evidence
 ```
 
-The Analyzer does not modify `canonical_ratings`. Future persistence through `analyzer_runs` / `analyzer_predictions` must preserve that rule.
-
-## Next steps
-
-1. add more timing comparisons against real charts
-2. model finger occupancy for `Hold`
-3. reconstruct `MultiPlanet` input sequences
-4. add local burst / stamina / percentile features
-5. calibrate costs from real fingering data
-6. persist Analyzer results and expose them in Admin
-7. add a P/G/U family classifier and tier regressor
-
-Even after a difficulty model exists, the final canonical rating remains human-controlled.
+The Analyzer never writes `canonical_ratings`. That rule must remain true if results are later persisted through `analyzer_runs` / `analyzer_predictions`.
