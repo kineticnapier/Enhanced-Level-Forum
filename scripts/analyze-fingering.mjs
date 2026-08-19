@@ -1,5 +1,5 @@
 import { extname, basename, dirname, join, resolve } from 'node:path'
-import { readFile, writeFile, mkdir } from 'node:fs/promises'
+import { readFile, writeFile, mkdir, access } from 'node:fs/promises'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { analyzeFingering } from './analyzer/fingering-dp.mjs'
@@ -27,6 +27,36 @@ for (let i = 0; i < args.length; i++) {
   else if (arg === '--stdout') stdout = true
   else if (arg === '--no-view') noView = true
   else throw new Error(`Unknown option: ${arg}`)
+}
+
+async function hasReplayAssets(dir) {
+  if (!dir) return false
+  for (const candidate of [dir, join(dir, 'Texture2D')]) {
+    try {
+      await access(join(candidate, 'tile_unlit.png'))
+      await access(join(candidate, 'planet-red.png'))
+      await access(join(candidate, 'planet-blue.png'))
+      return true
+    } catch {
+      // Try the next candidate root.
+    }
+  }
+  return false
+}
+
+async function autoDetectAssetDir(inputDir) {
+  const bundled = fileURLToPath(new URL('./analyzer/replay-assets/', import.meta.url))
+  const envDir = process.env.ELF_ADOFAI_ASSETS ? resolve(process.env.ELF_ADOFAI_ASSETS) : null
+  const candidates = [
+    envDir,
+    join(inputDir, 'Texture2D'),
+    inputDir,
+    join(process.cwd(), 'Texture2D'),
+    process.cwd(),
+    bundled,
+  ].filter(Boolean)
+  for (const candidate of candidates) if (await hasReplayAssets(candidate)) return candidate
+  return null
 }
 
 const inputPath = resolve(inputPathArg)
@@ -65,8 +95,14 @@ if (stdout) process.stdout.write(serialized)
 if (isAdofai && !noView) {
   const replayPath = resolve(explicitHtmlPath ?? join(targetDir, `${stem}-replay.html`))
   const visualizerPath = fileURLToPath(new URL('./visualize-fingering.mjs', import.meta.url))
+  const resolvedAssetDir = assetDir ? resolve(assetDir) : await autoDetectAssetDir(inputDir)
   const viewerArgs = [visualizerPath, resultPath, replayPath]
-  if (assetDir) viewerArgs.push('--assets', assetDir)
+  if (resolvedAssetDir) {
+    viewerArgs.push('--assets', resolvedAssetDir)
+    console.log(`Replay assets: auto-detected ${resolvedAssetDir}`)
+  } else {
+    console.log('Replay assets: not found automatically; viewer will use vector fallback')
+  }
   const child = spawnSync(process.execPath, viewerArgs, { stdio: 'inherit' })
   if (child.error) throw child.error
   if (child.status !== 0) process.exit(child.status ?? 1)
