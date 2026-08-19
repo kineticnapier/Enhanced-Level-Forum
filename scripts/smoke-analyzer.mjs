@@ -104,6 +104,11 @@ if (!special.timing.warnings.includes('MULTIPLANET_PRESS_COUNT_NOT_MODELED')) th
 const direct = analyzeFingering(straight)
 if (direct.input.eventCount !== 3) throw new Error('ADOFAI extractor output must feed fingering DP directly')
 
+const analyzerCli = await readFile(new URL('./analyze-fingering.mjs', import.meta.url), 'utf8')
+for (const invariant of ['`${stem}-result.json`', '`${stem}-replay.html`', 'autoDetectAssetDir', "join(inputDir, 'Texture2D')", 'spawnSync(process.execPath', '--no-view']) {
+  if (!analyzerCli.includes(invariant)) throw new Error(`one-command analyzer pipeline missing: ${invariant}`)
+}
+
 const viewer = await readFile(new URL('./visualize-fingering.mjs', import.meta.url), 'utf8')
 for (const invariant of ['fingeringTrace', 'fingerProfile', '<canvas id="stage">', 'ELF ADOFAI Fingering Replay', 'class="keys"', 'segmentAt', 'orbitState', 'visualEvents', 'REPLAY_ASSET_FILES', 'tile_unlit.png', 'planet-red.png', 'swirl_red.png', 'speedAsset', 'drawPlanetSheet', 'pressWindowMs=85*rate']) {
   if (!viewer.includes(invariant)) throw new Error(`fingering visualizer missing: ${invariant}`)
@@ -114,4 +119,4 @@ for (const filename of ['tile_unlit.png', 'planet-red.png', 'planet-blue.png', '
 }
 
 console.log('DP FINGERING ANALYZER STATIC SMOKE PASSED')
-console.log('.adofai timing/geometry/events -> local-peak-aware hand DP -> textured ADOFAI-style playback + finger key viewer')
+console.log('.adofai -> timing/geometry -> local-peak-aware hand DP -> JSON + textured replay in one command')
