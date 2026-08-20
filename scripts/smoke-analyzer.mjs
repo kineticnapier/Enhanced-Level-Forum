@@ -21,8 +21,8 @@ const adaptive = analyzeFingering({ hitTimesMs: Array.from({ length: 16 }, (_, i
 if (!adaptive.config.adaptiveStop) throw new Error('default search should be adaptive')
 if (adaptive.keyCountCurve.length >= adaptive.config.requestedKeyCounts.length) throw new Error('easy chart should stop before full default curve')
 if (!adaptive.fingeringTrace?.length) throw new Error('adaptive search must rerun selected key count with trace')
-const expectedDefaultKeys = [2, 3, 4, 6, 8, 10, 12, 16, 24]
-if (JSON.stringify(adaptive.config.requestedKeyCounts) !== JSON.stringify(expectedDefaultKeys)) throw new Error('default key-count curve must be 2K -> 3K -> 4K -> 6K -> 8K -> ...')
+const expectedDefaultKeys = [2, 3, 4, 6, 8, 10, 12, 16, 24, 32]
+if (JSON.stringify(adaptive.config.requestedKeyCounts) !== JSON.stringify(expectedDefaultKeys)) throw new Error('default key-count curve must extend through 32K')
 if (adaptive.config.requestedKeyCounts.includes(5) || adaptive.config.requestedKeyCounts.includes(7)) throw new Error('5K/7K must not be automatic bridge points')
 
 const naturalAlternation = estimateFingeringForKeyCount(
@@ -104,11 +104,6 @@ if (!special.timing.warnings.includes('MULTIPLANET_PRESS_COUNT_NOT_MODELED')) th
 const direct = analyzeFingering(straight)
 if (direct.input.eventCount !== 3) throw new Error('ADOFAI extractor output must feed fingering DP directly')
 
-const analyzerCli = await readFile(new URL('./analyze-fingering.mjs', import.meta.url), 'utf8')
-for (const invariant of ['`${stem}-result.json`', '`${stem}-replay.html`', 'autoDetectAssetDir', "join(inputDir, 'Texture2D')", 'spawnSync(process.execPath', '--no-view']) {
-  if (!analyzerCli.includes(invariant)) throw new Error(`one-command analyzer pipeline missing: ${invariant}`)
-}
-
 const viewer = await readFile(new URL('./visualize-fingering.mjs', import.meta.url), 'utf8')
 for (const invariant of ['fingeringTrace', 'fingerProfile', '<canvas id="stage">', 'ELF ADOFAI Fingering Replay', 'class="keys"', 'segmentAt', 'orbitState', 'visualEvents', 'REPLAY_ASSET_FILES', 'tile_unlit.png', 'planet-red.png', 'swirl_red.png', 'speedAsset', 'drawPlanetSheet', 'pressWindowMs=85*rate']) {
   if (!viewer.includes(invariant)) throw new Error(`fingering visualizer missing: ${invariant}`)
@@ -118,5 +113,10 @@ for (const filename of ['tile_unlit.png', 'planet-red.png', 'planet-blue.png', '
   if (!assetReadme.includes(filename)) throw new Error(`replay asset documentation missing: ${filename}`)
 }
 
+const analyzerCli = await readFile(new URL('./analyze-fingering.mjs', import.meta.url), 'utf8')
+for (const invariant of ['-result.json', '-replay.html', 'visualize-fingering.mjs', '--assets', '--output-dir', '--no-view']) {
+  if (!analyzerCli.includes(invariant)) throw new Error(`one-command analyzer workflow missing: ${invariant}`)
+}
+
 console.log('DP FINGERING ANALYZER STATIC SMOKE PASSED')
-console.log('.adofai -> timing/geometry -> local-peak-aware hand DP -> JSON + textured replay in one command')
+console.log('.adofai -> JSON + replay HTML; local-peak-aware hand DP -> textured ADOFAI-style playback')
