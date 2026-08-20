@@ -1,6 +1,6 @@
-export const FINGERING_MODEL_VERSION = 'fingering-dp-v0.5'
+export const FINGERING_MODEL_VERSION = 'fingering-dp-v0.6'
 
-const DEFAULT_KEY_COUNTS = [2, 3, 4, 6, 8, 10, 12, 16, 24]
+const DEFAULT_KEY_COUNTS = [2, 3, 4, 6, 8, 10, 12, 16, 24, 32]
 const DEFAULT_OPTIONS = {
   beamWidth: 160,
   reuseWindowMs: 170,
