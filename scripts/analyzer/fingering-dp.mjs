@@ -1,6 +1,6 @@
-export const FINGERING_MODEL_VERSION = 'fingering-dp-v0.6'
+export const FINGERING_MODEL_VERSION = 'fingering-dp-v0.7'
 
-const DEFAULT_KEY_COUNTS = [2, 3, 4, 6, 8, 10, 12, 16, 24, 32]
+const DEFAULT_KEY_COUNTS = [2, 3, 4, 6, 8, 10, 12, 16, 24, 32, 36]
 const DEFAULT_OPTIONS = {
   beamWidth: 160,
   reuseWindowMs: 170,
@@ -141,8 +141,6 @@ function transitionCost(state, finger, timeMs, profile, options) {
       }
       if (state.sameHandRun >= 4) ergonomicPenalty += (state.sameHandRun - 3) * options.longRunWeight * fast
     } else {
-      // Cross-hand alternation is natural, but mismatched digits such as LM <-> RI
-      // should not beat the usual LI <-> RI pair unless recovery pressure requires it.
       ergonomicPenalty += Math.abs(current.digitRank - last.digitRank) * options.crossHandMismatchWeight * fast
     }
   }
@@ -337,8 +335,6 @@ export function analyzeFingering(rawInput, rawOptions = {}) {
     const point = estimateFingeringForKeyCount({ events }, keyCount, { ...options, collectTrace: false })
     curve.push(point)
     if (!explicitKeyCounts && options.fullCurve !== true) {
-      // Do not stop on the first apparently comfortable K. Require enough larger-K
-      // lookahead to prove that adding fingers does not remove a local bottleneck.
       const stableComfortable = selectThresholdPoint(curve, options, 'comfortable', true)
       if (stableComfortable) break
     }
