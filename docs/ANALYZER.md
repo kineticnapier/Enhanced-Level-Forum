@@ -6,156 +6,105 @@ ELF Analyzerは、確定難易度を自動決定する機能ではありませ�
 
 > Analyzer output must never directly create or modify a canonical rating.
 
-## ワンコマンド解析
+## ワンコマンド実行
 
-`.adofai` は1コマンドで、タイミング抽出・運指解析・JSON保存・リプレイHTML生成まで実行できます。
+通常は `.adofai` を1個渡すだけです。
 
 ```powershell
 npm run analyzer:fingering -- .\WYSI.adofai
 ```
 
-入力ファイルと同じディレクトリに自動で生成します。
+同じフォルダに自動で生成します。
 
 ```text
-WYSI.adofai
 WYSI-result.json
 WYSI-replay.html
 ```
 
-リプレイ用Texture2Dは次の順で自動検出します。
+`.adofai` → timing抽出 → 運指DP → JSON保存 → Replay HTML生成まで連続実行します。
 
-1. `ELF_ADOFAI_ASSETS` 環境変数
-2. `.adofai` と同じ場所の `Texture2D/`
-3. `.adofai` と同じディレクトリ
-4. カレントディレクトリの `Texture2D/`
-5. カレントディレクトリ
-6. `scripts/analyzer/replay-assets/`
+Replay用Texture2Dは次の順に自動探索します。
 
-見つからなければベクター表示へ自動フォールバックします。
+1. `--assets <dir>`
+2. `ELF_ADOFAI_ASSETS`
+3. `.adofai` と同じ場所の `Texture2D/`
+4. `.adofai` と同じ場所
+5. カレントディレクトリの `Texture2D/`
+6. カレントディレクトリ
+7. `scripts/analyzer/replay-assets/`
 
-必要な場合だけ明示指定できます。
+見つからないTextureは個別にvector fallbackされます。
 
-```powershell
-npm run analyzer:fingering -- .\WYSI.adofai --assets "C:\path\to\Texture2D"
-npm run analyzer:fingering -- .\WYSI.adofai --output-dir .\analysis
-npm run analyzer:fingering -- .\WYSI.adofai --html .\custom-replay.html
-npm run analyzer:fingering -- .\WYSI.adofai --no-view
-```
-
-既存の第2位置引数によるJSON出力先指定も互換維持しています。
-
-```powershell
-npm run analyzer:fingering -- .\WYSI.adofai .\custom-result.json
-```
-
-## 処理フロー
-
-```text
-.adofai
-↓
-angleData / pathData
-↓
-Twirl / SetSpeed / pitch / midspin
-↓
-入力時刻列 + track geometry
-↓
-local-peak-aware hand DP
-↓
-2K → 3K → 4K → 6K → 8K → 10K → 12K → 16K → 24K
-↓
-result JSON + replay HTML
-```
-
-5K / 7K は明示指定時のみ利用でき、自動探索のbridge pointには使いません。
+必要な場合のみ `--output-dir` / `--html` / `--stdout` / `--no-view` を指定できます。
 
 ## 運指モデル
 
-現在の標準プロファイルでは、2キー交互は `LI / RI` を優先し、3Kは `LI / RI / RM` を使います。高速な3連系は3本の指を使うロールとして扱えるようにしています。
+標準のadaptive key-count curveは次です。
 
-DPは主に次を保持します。
+```text
+2K → 3K → 4K → 6K → 8K → 10K → 12K → 16K → 24K → 32K
+```
 
-- 各指の最終使用時刻
-- 直前とその前に使った指
-- 左右の手
-- 同一手の連続長
-- 各指の使用回数と最小再使用間隔
-- 短い局所窓のコスト
+5K/7Kは明示指定時のみ利用できます。人間運指の自動探索は32Kまで行い、個別の `estimateFingeringForKeyCount` は引き続き64Kまで受け付けます。
 
-出力では全体平均 `costPerPress` に加えて `peakLocalCostPerPress` を保存します。これにより、譜面全体では4Kの平均負荷が低くても、一部のburstが6Kで大幅に改善する場合は「4Kで十分」と早期判定しにくくしています。
+- 2キーの自然な交互では `LI ↔ RI` を優先
+- 3Kは `LI / RI / RM` として三連系ロールを表現
+- 平均コストだけでなく `peakLocalCostPerPress` で局所負荷を見る
+- larger-K lookaheadで、短い6K相当burstを4K平均値で隠さない
+
+`STANDARD_FINGERING_MODEL_OUT_OF_RANGE` は「通常10K以内ではpractical thresholdに収まらない」ことを示す警告です。`EXTREME_KEY_COUNT` は32Kまで自動探索してもpracticalな運指が見つからない場合に使います。
 
 ## .adofai timing extractor
 
-現在のextractorは次を処理します。
+現在は次を処理します。
 
 - `angleData`
 - 旧形式 `pathData`
 - `Twirl`
-- `SetSpeed`
-  - `Multiplier`
-  - absolute BPM (`beatsPerMinute`)
+- `SetSpeed` (`Multiplier` / absolute BPM)
 - `settings.bpm`
 - `settings.pitch`
 - midspin (`999` / `!`)
-- `Pause` のduration
-- `Hold` のduration（時間長のみ）
+- `Pause` duration
+- `Hold` duration（時間長のみ）
 
-`.adofai` に存在する末尾カンマにも対応します。
+`.adofai` の末尾カンマにも対応します。
 
-`settings.offset` と `countdownTicks` は再生開始位置のメタデータとして結果に残しますが、運指の相対入力間隔には足しません。
+`settings.offset` と `countdownTicks` は再生開始位置のメタデータとして残しますが、運指の相対入力間隔には足しません。
 
 ### 現在の近似
 
-`Hold` は次の入力までの時間には反映しますが、指の占有状態はまだDPに入れていません。そのため `HOLD_INPUT_SEMANTICS_APPROXIMATE` を出します。
+- `HOLD_INPUT_SEMANTICS_APPROXIMATE`
+- `MULTIPLANET_PRESS_COUNT_NOT_MODELED`
+- `AUTOPLAY_TILE_INPUT_NOT_MODELED`
 
-`MultiPlanet` は必要入力数を正確に復元していないため `MULTIPLANET_PRESS_COUNT_NOT_MODELED`、`AutoPlayTiles` は自動入力区間をまだ除外していないため `AUTOPLAY_TILE_INPUT_NOT_MODELED` を出します。
+これらのwarningがある結果は、通常譜面と同じ精度として扱わない前提です。
 
-## リプレイ
+## Replay
 
-リプレイHTMLはstandaloneです。以下を表示します。
+生成されたHTMLはstandaloneで、次を表示します。
 
-- 譜面トラック
-- 現在floorへのカメラ追従
-- 赤/青惑星
+- 譜面形状
+- 惑星位置
 - Twirl / SetSpeed
-- BPM / direction / floor
-- DP推定のキービューワー
-- 再生、一時停止、シーク、速度、ズーム
+- floor / BPM / direction
+- DP運指Key Viewer
+- play / pause / seek / speed / zoom
 
-ローカルのゲームTexture2Dが利用できる場合は、床・惑星・Twirl・速度変化アイコンをHTMLへ埋め込みます。ゲーム素材自体はELF repoにはコミットしません。
+AssetStudio/AssetRipperで書き出した次のTexture2Dがあれば自動利用します。
 
-主に利用するファイル:
-
-- `tile_unlit.png`
-- `planet-red.png`
-- `planet-blue.png`
-- `swirl_red.png`
-- `swirl_blue.png`
-- `SetSpeed.png`
-- `SpeedDown.png`
-- `tile_samespeed.png`
-
-## 直接timing JSON入力
-
-抽出済みtiming JSONも引き続き利用できます。この場合、出力先を指定しなければ従来通りstdoutへJSONを出します。
-
-```json
-{
-  "hitTimesMs": [0, 100, 200, 300],
-  "keyCounts": [2, 3, 4, 6, 8]
-}
+```text
+tile_unlit.png
+planet-red.png
+planet-blue.png
+swirl_red.png
+swirl_blue.png
+SetSpeed.png
+SpeedDown.png
+tile_samespeed.png
 ```
 
-同時押しを明示する場合:
-
-```json
-{
-  "events": [
-    { "timeMs": 0, "presses": 1 },
-    { "timeMs": 100, "presses": 3 },
-    { "timeMs": 200, "presses": 1 }
-  ]
-}
-```
+ゲーム素材自体はELF repoにはコミットしません。
 
 ## AnalyzerとRating
 
