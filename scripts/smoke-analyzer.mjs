@@ -21,9 +21,13 @@ const adaptive = analyzeFingering({ hitTimesMs: Array.from({ length: 16 }, (_, i
 if (!adaptive.config.adaptiveStop) throw new Error('default search should be adaptive')
 if (adaptive.keyCountCurve.length >= adaptive.config.requestedKeyCounts.length) throw new Error('easy chart should stop before full default curve')
 if (!adaptive.fingeringTrace?.length) throw new Error('adaptive search must rerun selected key count with trace')
-const expectedDefaultKeys = [2, 3, 4, 6, 8, 10, 12, 16, 24, 32]
-if (JSON.stringify(adaptive.config.requestedKeyCounts) !== JSON.stringify(expectedDefaultKeys)) throw new Error('default key-count curve must extend through 32K')
+const expectedDefaultKeys = [2, 3, 4, 6, 8, 10, 12, 16, 24, 32, 36]
+if (JSON.stringify(adaptive.config.requestedKeyCounts) !== JSON.stringify(expectedDefaultKeys)) throw new Error('default key-count curve must extend through 36K')
 if (adaptive.config.requestedKeyCounts.includes(5) || adaptive.config.requestedKeyCounts.includes(7)) throw new Error('5K/7K must not be automatic bridge points')
+
+const thirtySix = estimateFingeringForKeyCount({ hitTimesMs: [0, 100] }, 36, { collectTrace: true, beamWidth: 32 })
+if (!thirtySix.feasible || thirtySix.fingerProfile.length !== 36) throw new Error('36K profile must be supported')
+if (thirtySix.fingerProfile[0].label !== 'L18' || thirtySix.fingerProfile[17].label !== 'L1' || thirtySix.fingerProfile[18].label !== 'R1' || thirtySix.fingerProfile[35].label !== 'R18') throw new Error('36K split profile labels must be L18..L1 / R1..R18')
 
 const naturalAlternation = estimateFingeringForKeyCount(
   { hitTimesMs: Array.from({ length: 20 }, (_, i) => i * 90) },
@@ -105,7 +109,7 @@ const direct = analyzeFingering(straight)
 if (direct.input.eventCount !== 3) throw new Error('ADOFAI extractor output must feed fingering DP directly')
 
 const viewer = await readFile(new URL('./visualize-fingering.mjs', import.meta.url), 'utf8')
-for (const invariant of ['fingeringTrace', 'fingerProfile', '<canvas id="stage">', 'ELF ADOFAI Fingering Replay', 'class="keys"', 'segmentAt', 'orbitState', 'visualEvents', 'REPLAY_ASSET_FILES', 'tile_unlit.png', 'planet-red.png', 'swirl_red.png', 'speedAsset', 'drawPlanetSheet', 'pressWindowMs=85*rate']) {
+for (const invariant of ['fingeringTrace', 'fingerProfile', '<canvas id="stage">', 'ELF ADOFAI Fingering Replay', 'class="keys"', 'leftKeys', 'rightKeys', 'buildKeyViewer', 'keys.compact', 'segmentAt', 'orbitState', 'visualEvents', 'REPLAY_ASSET_FILES', 'tile_unlit.png', 'planet-red.png', 'swirl_red.png', 'speedAsset', 'drawPlanetSheet', 'pressWindowMs=85*rate']) {
   if (!viewer.includes(invariant)) throw new Error(`fingering visualizer missing: ${invariant}`)
 }
 const assetReadme = await readFile(new URL('./analyzer/replay-assets/README.md', import.meta.url), 'utf8')
@@ -119,4 +123,4 @@ for (const invariant of ['-result.json', '-replay.html', 'visualize-fingering.mj
 }
 
 console.log('DP FINGERING ANALYZER STATIC SMOKE PASSED')
-console.log('.adofai -> JSON + replay HTML; local-peak-aware hand DP -> textured ADOFAI-style playback')
+console.log('.adofai -> JSON + replay HTML; local-peak-aware hand DP -> compact split high-K viewer')
