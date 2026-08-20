@@ -21,93 +21,61 @@ WYSI-result.json
 WYSI-replay.html
 ```
 
-The command runs `.adofai` timing extraction, fingering DP, JSON output, and replay generation in sequence.
+Replay textures are auto-detected from `ELF_ADOFAI_ASSETS`, nearby/current `Texture2D/` directories, or `scripts/analyzer/replay-assets/`. Missing assets fall back to vector rendering. Overrides remain available through `--assets`, `--output-dir`, `--html`, `--stdout`, and `--no-view`.
 
-Replay Texture2D assets are auto-detected from `--assets`, `ELF_ADOFAI_ASSETS`, sibling/current `Texture2D/` directories, the chart/current directory, and finally `scripts/analyzer/replay-assets/`. Missing textures fall back individually to vector rendering.
+## Fingering DP
 
-Optional overrides include `--output-dir`, `--html`, `--stdout`, and `--no-view`.
-
-## Fingering model
-
-The standard adaptive key-count curve is:
+The default adaptive key-count curve is:
 
 ```text
-2K → 3K → 4K → 6K → 8K → 10K → 12K → 16K → 24K → 32K
+2K → 3K → 4K → 6K → 8K → 10K → 12K → 16K → 24K → 32K → 36K
 ```
 
-5K and 7K remain available when explicitly requested but are not automatic bridge points. Automatic human-fingering search runs through 32K; direct `estimateFingeringForKeyCount` calls still accept up to 64K.
+Other counts such as 5K/7K remain available when explicitly requested, and the internal API accepts up to 64K.
 
-- natural two-key alternation prefers `LI ↔ RI`
-- 3K uses `LI / RI / RM` to represent triplet-like rolls
-- local load is tracked with `peakLocalCostPerPress`, not only whole-chart average cost
-- larger-K lookahead prevents a short 6K-sensitive burst from being hidden by an otherwise easy 4K average
+For high K, the model uses abstract left/right input resources. 32K is labeled `L16..L1 / R1..R16`; 36K is `L18..L1 / R1..R18`. These labels do not imply 32 or 36 physical human fingers: they approximate keyboard, multiple-device, foot, or other input resources.
 
-`STANDARD_FINGERING_MODEL_OUT_OF_RANGE` means the chart does not fit the practical threshold within the ordinary <=10K range. `EXTREME_KEY_COUNT` is reserved for cases where the automatic search still cannot find a practical fingering by 32K.
+The DP records both average cost and rolling local peak load (`peakLocalCostPerPress`). A low-K solution is not considered sufficient merely because the whole-chart average is acceptable if a larger-K lookahead removes a strong local bottleneck.
 
-## .adofai timing extractor
+Moderate two-key alternation prefers `LI ↔ RI`, while 3K uses `LI / RI / RM` to represent triplet-like rolls.
 
-The extractor currently handles:
+## Replay Viewer
 
-- `angleData`
-- legacy `pathData`
-- `Twirl`
-- `SetSpeed` (`Multiplier` / absolute BPM)
-- `settings.bpm`
-- `settings.pitch`
-- midspin (`999` / `!`)
-- `Pause` duration
-- `Hold` duration as timeline length
+The replay synchronizes chart geometry, planet motion, Twirl, SetSpeed, and estimated input assignment on one playback clock.
 
-Trailing commas commonly found in `.adofai` JSON are accepted.
+For high K, the key viewer is split into left and right blocks. 32K/36K automatically use compact keys; narrower displays wrap each side into multiple rows instead of clipping beyond the viewport.
 
-`settings.offset` and `countdownTicks` are preserved as playback metadata but are not added to relative fingering intervals.
+Optional locally exported game textures:
 
-### Current approximations
+- `tile_unlit.png`
+- `planet-red.png`
+- `planet-blue.png`
+- `swirl_red.png`
+- `swirl_blue.png`
+- `SetSpeed.png`
+- `SpeedDown.png`
+- `tile_samespeed.png`
+
+Game assets themselves are not committed to ELF; they are embedded locally into the generated standalone HTML.
+
+## Timing extractor
+
+The current `.adofai` timing extractor handles the main timing primitives used by the analyzer, including `angleData`, legacy `pathData`, `Twirl`, `SetSpeed`, BPM/pitch, midspin, Pause, and Hold timeline length.
+
+Current explicit approximations include:
 
 - `HOLD_INPUT_SEMANTICS_APPROXIMATE`
 - `MULTIPLANET_PRESS_COUNT_NOT_MODELED`
 - `AUTOPLAY_TILE_INPUT_NOT_MODELED`
 
-Results with these warnings should not be treated as having the same timing fidelity as ordinary charts.
+## Analyzer warnings
 
-## Replay
+- `STANDARD_FINGERING_MODEL_OUT_OF_RANGE`: the practical threshold is not met inside the ordinary <=10K model range
+- `MULTI_KEYBOARD_LIKELY`: the practical key count is above 10K
+- `EXTREME_KEY_COUNT`: the automatic search reaches 36K without meeting the practical threshold
+- `HIGH_SIMULTANEOUS_PRESS_COUNT`
+- `BEAM_PRUNED`
 
-The generated standalone HTML renders:
+`EXTREME_KEY_COUNT` does not mean "humanly impossible". It means the current automatic search range/model did not find a sufficiently practical solution.
 
-- chart geometry
-- planet position
-- Twirl / SetSpeed markers
-- floor / BPM / direction
-- DP finger key viewer
-- play / pause / seek / speed / zoom
-
-When available, locally exported AssetStudio/AssetRipper Texture2D files are embedded:
-
-```text
-tile_unlit.png
-planet-red.png
-planet-blue.png
-swirl_red.png
-swirl_blue.png
-SetSpeed.png
-SpeedDown.png
-tile_samespeed.png
-```
-
-Game assets themselves are not committed to the ELF repository.
-
-## Analyzer and Rating
-
-Analyzer output is Version-specific evidence.
-
-```text
-Level
-└─ Variant
-   └─ Version
-      ├─ Human rating evidence
-      ├─ References
-      ├─ External evidence
-      └─ Analyzer evidence
-```
-
-The Analyzer never modifies `canonical_ratings`. Future persistence through `analyzer_runs` / `analyzer_predictions` must preserve that rule.
+Analyzer output remains Version-specific evidence and never modifies `canonical_ratings`.
