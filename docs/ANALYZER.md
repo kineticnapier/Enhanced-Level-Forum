@@ -14,49 +14,55 @@ ELF Analyzerは、確定難易度を自動決定する機能ではありませ�
 npm run analyzer:fingering -- .\WYSI.adofai
 ```
 
-同じフォルダに自動で生成します。
+同じディレクトリに自動で:
 
 ```text
 WYSI-result.json
 WYSI-replay.html
 ```
 
-`.adofai` → timing抽出 → 運指DP → JSON保存 → Replay HTML生成まで連続実行します。
+を生成します。Replay用テクスチャは `ELF_ADOFAI_ASSETS`、譜面横/カレントの `Texture2D/`、`scripts/analyzer/replay-assets/` などから自動検出します。見つからない場合はベクター描画へfallbackします。
 
-Replay用Texture2Dは次の順に自動探索します。
+必要な場合だけ `--assets`, `--output-dir`, `--html`, `--stdout`, `--no-view` を指定できます。
 
-1. `--assets <dir>`
-2. `ELF_ADOFAI_ASSETS`
-3. `.adofai` と同じ場所の `Texture2D/`
-4. `.adofai` と同じ場所
-5. カレントディレクトリの `Texture2D/`
-6. カレントディレクトリ
-7. `scripts/analyzer/replay-assets/`
+## DP運指推定
 
-見つからないTextureは個別にvector fallbackされます。
-
-必要な場合のみ `--output-dir` / `--html` / `--stdout` / `--no-view` を指定できます。
-
-## 運指モデル
-
-標準のadaptive key-count curveは次です。
+標準のadaptive key-count curveは現在:
 
 ```text
-2K → 3K → 4K → 6K → 8K → 10K → 12K → 16K → 24K → 32K
+2K → 3K → 4K → 6K → 8K → 10K → 12K → 16K → 24K → 32K → 36K
 ```
 
-5K/7Kは明示指定時のみ利用できます。人間運指の自動探索は32Kまで行い、個別の `estimateFingeringForKeyCount` は引き続き64Kまで受け付けます。
+です。5K/7Kなども明示指定すれば解析できます。内部APIは64Kまで受け付けます。
 
-- 2キーの自然な交互では `LI ↔ RI` を優先
-- 3Kは `LI / RI / RM` として三連系ロールを表現
-- 平均コストだけでなく `peakLocalCostPerPress` で局所負荷を見る
-- larger-K lookaheadで、短い6K相当burstを4K平均値で隠さない
+高Kでは左右を均等に分けた抽象キー資源として扱います。32Kは `L16..L1 / R1..R16`、36Kは `L18..L1 / R1..R18` です。これは32本/36本の物理的な人間の指を意味するものではなく、キーボード・複数入力デバイス・足などを含めた入力資源の近似です。
 
-`STANDARD_FINGERING_MODEL_OUT_OF_RANGE` は「通常10K以内ではpractical thresholdに収まらない」ことを示す警告です。`EXTREME_KEY_COUNT` は32Kまで自動探索してもpracticalな運指が見つからない場合に使います。
+現在のDPは平均コストだけでなく、rolling local peak (`peakLocalCostPerPress`) も記録します。4Kで全体平均が低くても、局所burstが6Kで大幅に軽くなる場合は4Kを十分とは判定しにくくします。
+
+2キーの通常交互は `LI ↔ RI` を優先し、3Kでは `LI / RI / RM` を使って三連系ロールを表現します。
+
+## Replay Viewer
+
+Replayはタイミング、譜面形状、惑星位置、Twirl、SetSpeed、推定運指を同じ再生クロックで表示します。
+
+高KのKey Viewerは左右ブロックへ分割し、32K/36Kでは自動的にcompact表示します。狭い画面では各側を複数段に折り返して、画面外へはみ出さないようにします。
+
+本家Texture2Dを書き出している場合は次のアセットを利用できます。
+
+- `tile_unlit.png`
+- `planet-red.png`
+- `planet-blue.png`
+- `swirl_red.png`
+- `swirl_blue.png`
+- `SetSpeed.png`
+- `SpeedDown.png`
+- `tile_samespeed.png`
+
+ゲーム素材自体はELF repoへコミットしません。ローカルで読み込んでstandalone HTMLへ埋め込みます。
 
 ## .adofai timing extractor
 
-現在は次を処理します。
+現在のextractorは主に次を処理します。
 
 - `angleData`
 - 旧形式 `pathData`
@@ -65,46 +71,26 @@ Replay用Texture2Dは次の順に自動探索します。
 - `settings.bpm`
 - `settings.pitch`
 - midspin (`999` / `!`)
-- `Pause` duration
-- `Hold` duration（時間長のみ）
+- `Pause`
+- `Hold` の時間長
 
-`.adofai` の末尾カンマにも対応します。
-
-`settings.offset` と `countdownTicks` は再生開始位置のメタデータとして残しますが、運指の相対入力間隔には足しません。
+`settings.offset` と `countdownTicks` は再生メタデータとして保持しますが、運指の相対入力間隔には足しません。
 
 ### 現在の近似
 
-- `HOLD_INPUT_SEMANTICS_APPROXIMATE`
-- `MULTIPLANET_PRESS_COUNT_NOT_MODELED`
-- `AUTOPLAY_TILE_INPUT_NOT_MODELED`
+- `HOLD_INPUT_SEMANTICS_APPROXIMATE`: Hold中の指占有は未モデル化
+- `MULTIPLANET_PRESS_COUNT_NOT_MODELED`: MultiPlanetの必要入力数は未復元
+- `AUTOPLAY_TILE_INPUT_NOT_MODELED`: AutoPlayTilesの入力除外は未対応
 
-これらのwarningがある結果は、通常譜面と同じ精度として扱わない前提です。
+## Analyzer warnings
 
-## Replay
+- `STANDARD_FINGERING_MODEL_OUT_OF_RANGE`: 通常10K以内のモデルではpractical thresholdに収まらない
+- `MULTI_KEYBOARD_LIKELY`: practical key countが10Kを超える
+- `EXTREME_KEY_COUNT`: 自動探索上限36Kまで試してもpractical thresholdへ到達しない
+- `HIGH_SIMULTANEOUS_PRESS_COUNT`
+- `BEAM_PRUNED`
 
-生成されたHTMLはstandaloneで、次を表示します。
-
-- 譜面形状
-- 惑星位置
-- Twirl / SetSpeed
-- floor / BPM / direction
-- DP運指Key Viewer
-- play / pause / seek / speed / zoom
-
-AssetStudio/AssetRipperで書き出した次のTexture2Dがあれば自動利用します。
-
-```text
-tile_unlit.png
-planet-red.png
-planet-blue.png
-swirl_red.png
-swirl_blue.png
-SetSpeed.png
-SpeedDown.png
-tile_samespeed.png
-```
-
-ゲーム素材自体はELF repoにはコミットしません。
+`EXTREME_KEY_COUNT` は「人間には不可能」という意味ではなく、現在の自動探索範囲/モデルでは十分な運指を見つけられなかった、という警告です。
 
 ## AnalyzerとRating
 
