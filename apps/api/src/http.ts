@@ -5,13 +5,21 @@ export function jsonError(c: Context, status: number, message: string, details?:
   return c.json({ error: message, details }, status as 400)
 }
 
+function decodeCookieValue(value: string): string {
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    return value
+  }
+}
+
 export function parseCookies(header: string | undefined): Record<string, string> {
   if (!header) return {}
   return Object.fromEntries(
     header.split(';').map((part) => {
       const index = part.indexOf('=')
       if (index < 0) return [part.trim(), '']
-      return [part.slice(0, index).trim(), decodeURIComponent(part.slice(index + 1).trim())]
+      return [part.slice(0, index).trim(), decodeCookieValue(part.slice(index + 1).trim())]
     }),
   )
 }
