@@ -41,7 +41,7 @@ Moderate two-key alternation prefers `LI ↔ RI`, while 3K uses `LI / RI / RM` t
 
 ### Lanes and physical fingers
 
-`fingering-dp-v0.9` models lane/key count separately from the physical fingers that operate those lanes.
+`fingering-dp-v0.9` can model lane/key count separately from the physical fingers that operate those lanes.
 
 ```text
 Lane / key
@@ -49,56 +49,40 @@ Lane / key
 Physical finger
 ```
 
-When a real layout is known, JSON input may provide `laneFingerMap` and optionally `laneLabels`. Multiple lanes may map to the same physical finger.
+When a real layout is known, JSON input may provide `laneFingerMap` and optionally `laneLabels`. Multiple lanes may map to the same physical finger. Reuse state is tracked per physical finger, while changing lane with the same finger only adds the small `laneSwitchWeight` / `laneJumpWeight` cost. The model does not add a general hand-reposition penalty.
 
-A layout where one finger can depress multiple keys at the same time can additionally provide `simultaneousLaneGroups`. Every lane in one group must map to the same physical finger. The DP treats any subset of that group as simultaneously compatible.
+### Same-finger simultaneous lanes
+
+Physical finger count is not a universal simultaneous-input hard cap. Real layouts where one finger can depress multiple keys at once can declare `simultaneousLaneGroups`.
 
 ```json
 {
-  "keyCounts": [16],
-  "traceKeyCount": 16,
-  "laneLabels": [
-    "K01", "K02", "K03", "K04", "K05", "K06", "K07", "K08",
-    "K09", "K10", "K11", "K12", "K13", "K14", "K15", "K16"
-  ],
-  "laneFingerMap": [
-    "LP", "LR", "LM", "LI", "LP", "LP", "LT", "LT",
-    "RI", "RM", "RR", "RP", "RT", "RT", "RP", "RP"
-  ],
   "simultaneousLaneGroups": [
-    ["K05", "K06"]
-  ],
-  "hitTimesMs": [0, 60, 120, 180]
+    ["K05", "K06"],
+    ["K13", "K14"]
+  ]
 }
 ```
 
-This example has 16 lanes and 10 physical fingers, but `K05 + K06` are explicitly declared as a two-lane chord for the same `LP`, so its simultaneous capacity is 11.
+Every group must contain lanes mapped to one physical finger. Any subset of a declared group is considered simultaneously usable, and those presses are not charged as zero-ms sequential reuse. The layout exposes `simultaneousCapacity`; chords above it fail with `SIMULTANEOUS_PRESS_COUNT_EXCEEDS_LAYOUT_CAPACITY`.
 
-Internally the DP then:
-
-- tracks `lastUse` and reuse penalties per physical finger rather than per lane
-- adds only a small `laneSwitchWeight` / `laneJumpWeight` cost when one physical finger changes lane
-- allows a physical finger to cover multiple presses in one chord only when the lane set is declared by `simultaneousLaneGroups`
-- does not turn an allowed same-finger chord into a fake zero-ms sequential finger reuse
-- gives a finger without a simultaneous group only one lane of capacity per chord
-- computes `simultaneousCapacity` from the actual per-finger groups instead of using physical-finger count as a universal hard cap
-- does not add a general hand-reposition penalty; the intended model keeps the hand mostly fixed and changes participating fingers/lanes
-
-With the same 16-lane/10-finger mapping, capacity stays at 10 when no group is declared. Declaring `["K05", "K06"]` raises it to 11, so an 11-press chord can be searched. A 12-press chord is rejected with `SIMULTANEOUS_PRESS_COUNT_EXCEEDS_LAYOUT_CAPACITY`.
-
-Lane labels are recommended inside `simultaneousLaneGroups`; zero-based lane indices are also accepted. Mixing lanes from different physical fingers in one group is an input error.
-
-Output includes `laneProfile`, `physicalFingerProfile`, `physicalFingerCount`, `simultaneousCapacity`, `simultaneousLaneGroups`, `laneCounts`, `fingerCounts`, and `laneSwitchRate`. `fingerProfile` is currently retained as the lane-viewer profile for replay compatibility. Trace entries contain both `lane` / `laneLabel` and `physicalFinger` / `physicalFingerLabel`.
-
-Results using an explicit lane-to-finger map include the informational `CUSTOM_LANE_FINGER_MAP` warning. Results using same-finger chord groups include `CUSTOM_SIMULTANEOUS_LANE_GROUPS`. Neither warning is an error.
-
-Per-key-count layouts may also be supplied through `laneFingerMaps`, `laneLabelsByKeyCount`, and `simultaneousLaneGroupsByKeyCount`.
+Output includes `laneProfile`, `physicalFingerProfile`, `physicalFingerCount`, `simultaneousCapacity`, `simultaneousLaneGroups`, `laneCounts`, `fingerCounts`, and `laneSwitchRate`. Trace entries contain both lane and physical-finger IDs/labels.
 
 ## Replay Viewer
 
 The replay synchronizes chart geometry, planet motion, Twirl, SetSpeed, and estimated input assignment on one playback clock.
 
-For high K, the key viewer is split into left and right blocks. 32K/36K automatically use compact keys; narrower displays wrap each side into multiple rows instead of clipping beyond the viewport.
+Generic high-K viewing uses a JRP-style layout:
+
+```text
+L4 L3 L2 L1 | R1 R2 R3 R4
+L8 L7 L6 L5 | R5 R6 R7 R8
+K17 K18 K19 ...
+```
+
+The internal abstract high-K resource names are remapped to priority-oriented `L1..L8 / R1..R8` display labels, so an internal first left resource such as `L18` is presented as `L1`. Explicit/custom lane layouts keep their actual lane labels instead of being renamed.
+
+Each key displays its cumulative press count. The footer displays rolling one-second `KPS` and cumulative `Total` presses at the current replay time. KPS is calculated in chart time, independent of playback speed. Keys beyond 16 are placed below the two primary rows and wrap as needed.
 
 Optional locally exported game textures:
 
@@ -130,7 +114,7 @@ Current explicit approximations include:
 - `EXTREME_KEY_COUNT`: the automatic search reaches 36K without meeting the practical threshold
 - `HIGH_SIMULTANEOUS_PRESS_COUNT`
 - `CUSTOM_LANE_FINGER_MAP`: analysis used an explicit lane-to-physical-finger mapping
-- `CUSTOM_SIMULTANEOUS_LANE_GROUPS`: analysis used explicit same-finger simultaneous-lane compatibility
+- `CUSTOM_SIMULTANEOUS_LANE_GROUPS`: analysis used explicit same-finger simultaneous lane groups
 - `BEAM_PRUNED`
 
 `EXTREME_KEY_COUNT` does not mean "humanly impossible". It means the current automatic search range/model did not find a sufficiently practical solution.
