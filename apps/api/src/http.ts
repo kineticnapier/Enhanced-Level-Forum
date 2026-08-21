@@ -5,15 +5,29 @@ export function jsonError(c: Context, status: number, message: string, details?:
   return c.json({ error: message, details }, status as 400)
 }
 
+function safeDecodeCookieValue(value: string): string | null {
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    return null
+  }
+}
+
 export function parseCookies(header: string | undefined): Record<string, string> {
   if (!header) return {}
-  return Object.fromEntries(
-    header.split(';').map((part) => {
-      const index = part.indexOf('=')
-      if (index < 0) return [part.trim(), '']
-      return [part.slice(0, index).trim(), decodeURIComponent(part.slice(index + 1).trim())]
-    }),
-  )
+
+  const cookies: Record<string, string> = {}
+  for (const part of header.split(';')) {
+    const index = part.indexOf('=')
+    const name = (index < 0 ? part : part.slice(0, index)).trim()
+    if (!name) continue
+
+    const rawValue = index < 0 ? '' : part.slice(index + 1).trim()
+    const decodedValue = safeDecodeCookieValue(rawValue)
+    if (decodedValue === null) continue
+    cookies[name] = decodedValue
+  }
+  return cookies
 }
 
 export function sessionCookieName(env: Env): string {
