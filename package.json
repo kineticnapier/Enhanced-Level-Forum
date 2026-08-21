@@ -30,7 +30,7 @@
     "smoke": "node scripts/run-parallel.mjs smoke:core smoke:public smoke:auth smoke:deploy smoke:i18n smoke:cron smoke:metadata smoke:rating-queue smoke:submissions smoke:level-variants",
     "smoke:core": "node scripts/smoke.mjs",
     "smoke:public": "node scripts/smoke-public.mjs",
-    "smoke:auth": "node scripts/smoke-auth.mjs",
+    "smoke:auth": "node scripts/smoke-auth.mjs && tsx scripts/smoke-auth-runtime.ts",
     "smoke:deploy": "node scripts/smoke-deploy.mjs",
     "smoke:i18n": "node scripts/smoke-i18n.mjs",
     "smoke:cron": "node scripts/smoke-cron.mjs",
