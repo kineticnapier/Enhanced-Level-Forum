@@ -29,29 +29,19 @@ export const DEFAULT_OPTIONS = {
 }
 
 const NAMED_KEY_PROFILES = {
-  1: ['RI'],
-  2: ['LI', 'RI'],
-  3: ['LI', 'RI', 'RM'],
-  4: ['LM', 'LI', 'RI', 'RM'],
-  5: ['LR', 'LM', 'LI', 'RI', 'RM'],
-  6: ['LR', 'LM', 'LI', 'RI', 'RM', 'RR'],
-  7: ['LP', 'LR', 'LM', 'LI', 'RI', 'RM', 'RR'],
-  8: ['LP', 'LR', 'LM', 'LI', 'RI', 'RM', 'RR', 'RP'],
+  1: ['RI'], 2: ['LI', 'RI'], 3: ['LI', 'RI', 'RM'], 4: ['LM', 'LI', 'RI', 'RM'],
+  5: ['LR', 'LM', 'LI', 'RI', 'RM'], 6: ['LR', 'LM', 'LI', 'RI', 'RM', 'RR'],
+  7: ['LP', 'LR', 'LM', 'LI', 'RI', 'RM', 'RR'], 8: ['LP', 'LR', 'LM', 'LI', 'RI', 'RM', 'RR', 'RP'],
   9: ['LP', 'LR', 'LM', 'LI', 'LT', 'RI', 'RM', 'RR', 'RP'],
   10: ['LP', 'LR', 'LM', 'LI', 'LT', 'RT', 'RI', 'RM', 'RR', 'RP'],
 }
 
 const NAMED_FINGER_META = {
-  LP: { hand: 'L', order: 0, digitRank: 3, preference: 0.9 },
-  LR: { hand: 'L', order: 1, digitRank: 2, preference: 0.52 },
-  LM: { hand: 'L', order: 2, digitRank: 1, preference: 0.22 },
-  LI: { hand: 'L', order: 3, digitRank: 0, preference: 0 },
-  LT: { hand: 'L', order: 4, digitRank: 0.6, preference: 0.62 },
-  RT: { hand: 'R', order: 0, digitRank: 0.6, preference: 0.62 },
-  RI: { hand: 'R', order: 1, digitRank: 0, preference: 0 },
-  RM: { hand: 'R', order: 2, digitRank: 1, preference: 0.22 },
-  RR: { hand: 'R', order: 3, digitRank: 2, preference: 0.52 },
-  RP: { hand: 'R', order: 4, digitRank: 3, preference: 0.9 },
+  LP: { hand: 'L', order: 0, digitRank: 3, preference: 0.9 }, LR: { hand: 'L', order: 1, digitRank: 2, preference: 0.52 },
+  LM: { hand: 'L', order: 2, digitRank: 1, preference: 0.22 }, LI: { hand: 'L', order: 3, digitRank: 0, preference: 0 },
+  LT: { hand: 'L', order: 4, digitRank: 0.6, preference: 0.62 }, RT: { hand: 'R', order: 0, digitRank: 0.6, preference: 0.62 },
+  RI: { hand: 'R', order: 1, digitRank: 0, preference: 0 }, RM: { hand: 'R', order: 2, digitRank: 1, preference: 0.22 },
+  RR: { hand: 'R', order: 3, digitRank: 2, preference: 0.52 }, RP: { hand: 'R', order: 4, digitRank: 3, preference: 0.9 },
 }
 
 export function finiteNumber(value, name) {
@@ -74,9 +64,7 @@ export function normalizeEvents(input) {
       grouped.set(timeMs, (grouped.get(timeMs) ?? 0) + 1)
     }
     events = [...grouped.entries()].map(([timeMs, presses]) => ({ timeMs, presses }))
-  } else {
-    throw new Error('Provide events[] or hitTimesMs[]')
-  }
+  } else throw new Error('Provide events[] or hitTimesMs[]')
   events.sort((a, b) => a.timeMs - b.timeMs)
   return events
 }
@@ -124,7 +112,6 @@ function normalizeLaneFingerMap(rawInput, keyCount) {
   if (map.length !== keyCount) throw new Error(`laneFingerMap must contain exactly ${keyCount} entries`)
   const labels = Array.isArray(rawInput?.laneLabels) ? rawInput.laneLabels : null
   if (labels && labels.length !== keyCount) throw new Error(`laneLabels must contain exactly ${keyCount} entries`)
-
   return map.map((entry, index) => {
     const object = entry && typeof entry === 'object' && !Array.isArray(entry) ? entry : null
     const fingerLabel = String(object?.fingerLabel ?? object?.finger ?? object?.physicalFinger ?? entry ?? '').trim()
@@ -132,8 +119,7 @@ function normalizeLaneFingerMap(rawInput, keyCount) {
     const laneLabel = String(object?.laneLabel ?? object?.lane ?? labels?.[index] ?? `K${String(index + 1).padStart(2, '0')}`).trim()
     if (!laneLabel) throw new Error(`laneFingerMap[${index}] lane label must not be empty`)
     return {
-      laneLabel,
-      fingerLabel,
+      laneLabel, fingerLabel,
       hand: object?.hand === 'L' || object?.hand === 'R' ? object.hand : null,
       fingerOrder: Number.isFinite(Number(object?.fingerOrder)) ? Number(object.fingerOrder) : null,
       digitRank: Number.isFinite(Number(object?.digitRank)) ? Number(object.digitRank) : null,
@@ -149,13 +135,7 @@ export function buildProfiles(rawInput, keyCount) {
   const entries = customMap ?? defaultLabels.map((label) => ({
     laneLabel: label, fingerLabel: label, hand: null, fingerOrder: null, digitRank: null, preference: null, resourceKind: null,
   }))
-
-  const fingerProfile = []
-  const fingerIndexByLabel = new Map()
-  const fallbackOrderByHand = { L: 0, R: 0 }
-  const laneOrderByHand = { L: 0, R: 0 }
-  const laneProfile = []
-
+  const fingerProfile = [], fingerIndexByLabel = new Map(), fallbackOrderByHand = { L: 0, R: 0 }, laneOrderByHand = { L: 0, R: 0 }, laneProfile = []
   for (let laneIndex = 0; laneIndex < entries.length; laneIndex++) {
     const entry = entries[laneIndex]
     let fingerIndex = fingerIndexByLabel.get(entry.fingerLabel)
@@ -166,30 +146,14 @@ export function buildProfiles(rawInput, keyCount) {
       const info = digitInfo(entry.fingerLabel, fallbackOrder)
       fingerIndex = fingerProfile.length
       fingerIndexByLabel.set(entry.fingerLabel, fingerIndex)
-      fingerProfile.push({
-        index: fingerIndex,
-        label: entry.fingerLabel,
-        hand,
-        order: entry.fingerOrder ?? named?.order ?? fallbackOrder,
-        digitRank: entry.digitRank ?? info.digitRank,
-        preference: entry.preference ?? info.preference,
-      })
+      fingerProfile.push({ index: fingerIndex, label: entry.fingerLabel, hand, order: entry.fingerOrder ?? named?.order ?? fallbackOrder, digitRank: entry.digitRank ?? info.digitRank, preference: entry.preference ?? info.preference })
     }
-
     const finger = fingerProfile[fingerIndex]
     const order = laneOrderByHand[finger.hand]++
+    // JRP-style K17+ resources are the lanes after the first eight per side.
     const resourceKind = entry.resourceKind ?? (!customMap && keyCount > 16 && order >= 8 ? 'FOOT' : 'HAND')
-    laneProfile.push({
-      index: laneIndex,
-      label: entry.laneLabel,
-      hand: finger.hand,
-      order,
-      resourceKind,
-      physicalFinger: fingerIndex,
-      physicalFingerLabel: finger.label,
-    })
+    laneProfile.push({ index: laneIndex, label: entry.laneLabel, hand: finger.hand, order, resourceKind, physicalFinger: fingerIndex, physicalFingerLabel: finger.label })
   }
-
   return { laneProfile, fingerProfile, customLaneFingerMap: customMap !== null }
 }
 
@@ -207,32 +171,21 @@ function laneIndexFromReference(ref, laneProfile, groupIndex) {
 export function normalizeSimultaneousLaneGroups(rawInput, laneProfile, fingerProfile) {
   const source = rawInput?.simultaneousLaneGroups ?? rawInput?.simultaneousGroups
   if (!Array.isArray(source)) return { groups: [], groupsByFinger: new Map(), custom: false }
-
-  const groups = []
-  const groupsByFinger = new Map()
-  const seen = new Set()
+  const groups = [], groupsByFinger = new Map(), seen = new Set()
   for (let groupIndex = 0; groupIndex < source.length; groupIndex++) {
-    const entry = source[groupIndex]
-    const laneRefs = Array.isArray(entry) ? entry : entry?.lanes
+    const entry = source[groupIndex], laneRefs = Array.isArray(entry) ? entry : entry?.lanes
     if (!Array.isArray(laneRefs) || laneRefs.length < 2) throw new Error(`simultaneousLaneGroups[${groupIndex}] must contain at least two lanes`)
     const lanes = [...new Set(laneRefs.map((ref) => laneIndexFromReference(ref, laneProfile, groupIndex)))].sort((a, b) => a - b)
     if (lanes.length < 2) throw new Error(`simultaneousLaneGroups[${groupIndex}] must contain at least two distinct lanes`)
     const fingers = new Set(lanes.map((laneIndex) => laneProfile[laneIndex].physicalFinger))
     if (fingers.size !== 1) throw new Error(`simultaneousLaneGroups[${groupIndex}] lanes must share one physical finger/resource`)
-    const finger = [...fingers][0]
-    const key = `${finger}:${lanes.join(',')}`
+    const finger = [...fingers][0], key = `${finger}:${lanes.join(',')}`
     if (seen.has(key)) continue
     seen.add(key)
-    const group = {
-      lanes,
-      laneLabels: lanes.map((laneIndex) => laneProfile[laneIndex].label),
-      physicalFinger: finger,
-      physicalFingerLabel: fingerProfile[finger].label,
-    }
+    const group = { lanes, laneLabels: lanes.map((laneIndex) => laneProfile[laneIndex].label), physicalFinger: finger, physicalFingerLabel: fingerProfile[finger].label }
     groups.push(group)
     const list = groupsByFinger.get(finger) ?? []
-    list.push(new Set(lanes))
-    groupsByFinger.set(finger, list)
+    list.push(new Set(lanes)); groupsByFinger.set(finger, list)
   }
   return { groups, groupsByFinger, custom: true }
 }
