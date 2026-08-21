@@ -23,6 +23,7 @@ const checks = [
   [auth.includes('Origin is not allowed'), 'browser origin guard exists'],
   [http.includes('__Host-elf_session'), 'production cookie uses __Host- prefix'],
   [!http.includes('Domain='), 'session cookie implementation does not set Domain'],
+  [http.includes('function decodeCookieValue') && http.includes('catch {') && http.includes('decodeCookieValue(part.slice(index + 1).trim())'), 'malformed cookie values cannot abort cookie parsing'],
   [entry.includes('registerProductionAuth(app)') && entry.indexOf('registerProductionAuth(app)') < entry.indexOf("app.route('/', coreApp)"), 'hardened auth is mounted before compatibility routes'],
   [migration.includes('auth_login_attempts') && migration.includes('is_active boolean'), 'auth hardening migration exists'],
   [createAdmin.includes('ELF_ADMIN_PASSWORD') && !createAdmin.includes("argument('--password')"), 'production admin script keeps password out of argv'],
