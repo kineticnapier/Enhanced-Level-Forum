@@ -1,6 +1,6 @@
 import { analyzeFingering, estimateFingeringForKeyCount, FINGERING_MODEL_VERSION } from './analyzer/fingering-dp.mjs'
 
-if (FINGERING_MODEL_VERSION !== 'fingering-dp-v0.9') throw new Error('lane/finger model version mismatch')
+if (FINGERING_MODEL_VERSION !== 'fingering-dp-v0.10') throw new Error('lane/finger model version mismatch')
 
 const laneFingerMap = [
   'LP', 'LR', 'LM', 'LI', 'LP', 'LP', 'LT', 'LT',
@@ -80,5 +80,52 @@ if (!mappedAnalysis.warnings.includes('CUSTOM_LANE_FINGER_MAP')) throw new Error
 if (!mappedAnalysis.warnings.includes('CUSTOM_SIMULTANEOUS_LANE_GROUPS')) throw new Error('custom simultaneous-lane warning missing')
 if (mappedAnalysis.config.customLaneFingerMapKeyCounts.join(',') !== '16') throw new Error('custom mapping key-count metadata missing')
 if (mappedAnalysis.config.customSimultaneousLaneGroupKeyCounts.join(',') !== '16') throw new Error('custom simultaneous-group key-count metadata missing')
+
+// v0.10: a same-time chord spanning both hands gets an explicit cost.
+const crossHandFree = estimateFingeringForKeyCount(
+  { events: [{ timeMs: 0, presses: 2 }] },
+  2,
+  { collectTrace: true, crossHandChordWeight: 0 },
+)
+const crossHandPenalized = estimateFingeringForKeyCount(
+  { events: [{ timeMs: 0, presses: 2 }] },
+  2,
+  { collectTrace: true, crossHandChordWeight: 0.45 },
+)
+if (!(crossHandPenalized.totalCost > crossHandFree.totalCost)) throw new Error('cross-hand same-time chord penalty missing')
+if (crossHandPenalized.crossHandChordCount !== 1 || crossHandPenalized.maxCrossHandChordPenalty !== 0.45) throw new Error('cross-hand chord metrics missing')
+
+const sameHandPreferredChord = estimateFingeringForKeyCount(
+  { events: [{ timeMs: 0, presses: 2 }] },
+  4,
+  { collectTrace: true, crossHandChordWeight: 0.45 },
+)
+if (new Set(sameHandPreferredChord.fingeringTrace.slice(0, 2).map((x) => x.hand)).size !== 1) throw new Error('4K two-note chord should prefer one hand when practical')
+if (sameHandPreferredChord.crossHandChordCount !== 0) throw new Error('same-hand chord must not count as cross-hand')
+
+// Generic JRP resources beyond the first 8 per side are K17+ foot inputs.
+const footTimes = Array.from({ length: 80 }, (_, i) => i * 5)
+const generic24NoFootPenalty = estimateFingeringForKeyCount(
+  { hitTimesMs: footTimes },
+  24,
+  { collectTrace: true, beamWidth: 64, footUseWeight: 0 },
+)
+const generic24StrongFootPenalty = estimateFingeringForKeyCount(
+  { hitTimesMs: footTimes },
+  24,
+  { collectTrace: true, beamWidth: 64, footUseWeight: 10 },
+)
+if (generic24NoFootPenalty.footLaneCount !== 8) throw new Error(`24K generic profile should expose 8 foot lanes, got ${generic24NoFootPenalty.footLaneCount}`)
+if (generic24NoFootPenalty.laneProfile.filter((x) => x.resourceKind === 'FOOT').length !== 8) throw new Error('generic K17+ resources must be marked FOOT')
+if (!(generic24NoFootPenalty.footPresses > generic24StrongFootPenalty.footPresses)) throw new Error('foot-use penalty should reduce optional foot input use')
+if (!generic24NoFootPenalty.fingeringTrace.every((x) => x.resourceKind === 'HAND' || x.resourceKind === 'FOOT')) throw new Error('trace resourceKind missing')
+
+const footAnalysis = analyzeFingering(
+  { hitTimesMs: footTimes, keyCounts: [24], traceKeyCount: 24 },
+  { beamWidth: 64, footUseWeight: 0 },
+)
+if (!footAnalysis.warnings.includes('FOOT_INPUT_USED')) throw new Error('foot-use warning missing')
+if (footAnalysis.config.crossHandChordWeight !== 0.45 || footAnalysis.config.footUseWeight !== 0) throw new Error('new penalty config metadata missing')
+if (!(footAnalysis.traceStats.footPresses > 0) || !(footAnalysis.traceStats.footUseRate > 0)) throw new Error('foot-use trace metrics missing')
 
 console.log('DP LANE/FINGER MODEL SMOKE PASSED')
