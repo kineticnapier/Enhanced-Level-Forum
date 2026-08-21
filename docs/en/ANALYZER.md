@@ -14,14 +14,7 @@ The normal path only needs one `.adofai` file:
 npm run analyzer:fingering -- .\WYSI.adofai
 ```
 
-It automatically creates next to the chart:
-
-```text
-WYSI-result.json
-WYSI-replay.html
-```
-
-Replay textures are auto-detected from `ELF_ADOFAI_ASSETS`, nearby/current `Texture2D/` directories, or `scripts/analyzer/replay-assets/`. Missing assets fall back to vector rendering. Overrides remain available through `--assets`, `--output-dir`, `--html`, `--stdout`, and `--no-view`.
+It automatically creates `WYSI-result.json` and `WYSI-replay.html` next to the chart. Replay textures are auto-detected from `ELF_ADOFAI_ASSETS`, nearby/current `Texture2D/` directories, or `scripts/analyzer/replay-assets/`; missing assets fall back to vector rendering. Overrides remain available through `--assets`, `--output-dir`, `--html`, `--stdout`, and `--no-view`.
 
 ## Fingering DP
 
@@ -33,20 +26,18 @@ The default adaptive key-count curve is:
 
 Other counts such as 5K/7K remain available when explicitly requested, and the internal API accepts up to 64K.
 
-For high K, the default model still uses abstract left/right input resources. 32K is labeled `L16..L1 / R1..R16`; 36K is `L18..L1 / R1..R18`. These labels do not imply 32 or 36 physical human fingers; they are fallback input-resource approximations when the actual keyboard layout is unknown.
+For high K, the default model uses abstract left/right input resources. 32K is internally labeled `L16..L1 / R1..R16`; 36K is `L18..L1 / R1..R18`. These labels do not imply 32 or 36 physical human fingers; they are fallback input-resource approximations when the actual layout is unknown.
 
-The DP records both average cost and rolling local peak load (`peakLocalCostPerPress`). A low-K solution is not considered sufficient merely because the whole-chart average is acceptable if a larger-K lookahead removes a strong local bottleneck.
-
-Moderate two-key alternation prefers `LI ↔ RI`, while 3K uses `LI / RI / RM` to represent triplet-like rolls.
+The DP records both average cost and rolling local peak load (`peakLocalCostPerPress`). A low-K solution is not considered sufficient merely because the whole-chart average is acceptable if a larger-K lookahead removes a strong local bottleneck. Moderate two-key alternation prefers `LI ↔ RI`, while 3K uses `LI / RI / RM` to represent triplet-like rolls.
 
 ### Lanes and physical fingers
 
-`fingering-dp-v0.9` can model lane/key count separately from the physical fingers that operate those lanes.
+`fingering-dp-v0.10` models lane/key count separately from physical fingers/resources.
 
 ```text
 Lane / key
    ↓ mapped to
-Physical finger
+Physical finger / resource
 ```
 
 When a real layout is known, JSON input may provide `laneFingerMap` and optionally `laneLabels`. Multiple lanes may map to the same physical finger. Reuse state is tracked per physical finger, while changing lane with the same finger only adds the small `laneSwitchWeight` / `laneJumpWeight` cost. The model does not add a general hand-reposition penalty.
@@ -66,13 +57,31 @@ Physical finger count is not a universal simultaneous-input hard cap. Real layou
 
 Every group must contain lanes mapped to one physical finger. Any subset of a declared group is considered simultaneously usable, and those presses are not charged as zero-ms sequential reuse. The layout exposes `simultaneousCapacity`; chords above it fail with `SIMULTANEOUS_PRESS_COUNT_EXCEEDS_LAYOUT_CAPACITY`.
 
-Output includes `laneProfile`, `physicalFingerProfile`, `physicalFingerCount`, `simultaneousCapacity`, `simultaneousLaneGroups`, `laneCounts`, `fingerCounts`, and `laneSwitchRate`. Trace entries contain both lane and physical-finger IDs/labels.
+### Cross-hand chords and foot input
+
+v0.10 adds explicit costs for input patterns that are harder to execute accurately:
+
+- **Cross-hand simultaneous chord**: when one same-time chord spans both left and right hands, `crossHandChordWeight` is added once. The default is `0.45`. Ordinary time-separated alternation such as `LI → RI → LI → RI` does not receive this chord penalty.
+- **Foot input**: in the generic high-K model, the first eight resources on each side are treated as hand inputs and later resources are treated as foot inputs. These correspond to `K17`, `K18`, ... in the JRP-style viewer. Every foot press adds `footUseWeight`, default `0.85`. Foot input is discouraged rather than forbidden, so the DP may still use it under sufficiently high density.
+
+Custom layouts can explicitly mark foot resources:
+
+```json
+{
+  "laneFingerMap": [
+    { "lane": "K01", "finger": "LI" },
+    { "lane": "K17", "finger": "F1", "resourceKind": "FOOT" }
+  ]
+}
+```
+
+`"foot": true` is also accepted as an alias for `resourceKind: "FOOT"`. Foot resources are excluded from normal hand ergonomics and from cross-hand chord detection; they are evaluated through the separate foot-use cost.
+
+Output includes `crossHandChordCount`, `footLaneCount`, `footPresses`, `footUseRate`, `maxCrossHandChordPenalty`, and `maxFootPenalty`. Trace entries include `resourceKind` (`HAND` or `FOOT`).
 
 ## Replay Viewer
 
-The replay synchronizes chart geometry, planet motion, Twirl, SetSpeed, and estimated input assignment on one playback clock.
-
-Generic high-K viewing uses a JRP-style layout:
+The replay synchronizes chart geometry, planet motion, Twirl, SetSpeed, and estimated input assignment on one playback clock. Generic high-K viewing uses a JRP-style layout:
 
 ```text
 L4 L3 L2 L1 | R1 R2 R3 R4
@@ -84,22 +93,11 @@ The internal abstract high-K resource names are remapped to priority-oriented `L
 
 Each key displays its cumulative press count. The footer displays rolling one-second `KPS` and cumulative `Total` presses at the current replay time. KPS is calculated in chart time, independent of playback speed. Keys beyond 16 are placed below the two primary rows and wrap as needed.
 
-Optional locally exported game textures:
-
-- `tile_unlit.png`
-- `planet-red.png`
-- `planet-blue.png`
-- `swirl_red.png`
-- `swirl_blue.png`
-- `SetSpeed.png`
-- `SpeedDown.png`
-- `tile_samespeed.png`
-
-Game assets themselves are not committed to ELF; they are embedded locally into the generated standalone HTML.
+Optional locally exported game textures include `tile_unlit.png`, `planet-red.png`, `planet-blue.png`, `swirl_red.png`, `swirl_blue.png`, `SetSpeed.png`, `SpeedDown.png`, and `tile_samespeed.png`. Game assets themselves are not committed to ELF; they are embedded locally into the generated standalone HTML.
 
 ## Timing extractor
 
-The current `.adofai` timing extractor handles the main timing primitives used by the analyzer, including `angleData`, legacy `pathData`, `Twirl`, `SetSpeed`, BPM/pitch, midspin, Pause, and Hold timeline length.
+The current `.adofai` timing extractor handles `angleData`, legacy `pathData`, `Twirl`, `SetSpeed`, BPM/pitch, midspin, Pause, and Hold timeline length.
 
 Current explicit approximations include:
 
@@ -115,6 +113,7 @@ Current explicit approximations include:
 - `HIGH_SIMULTANEOUS_PRESS_COUNT`
 - `CUSTOM_LANE_FINGER_MAP`: analysis used an explicit lane-to-physical-finger mapping
 - `CUSTOM_SIMULTANEOUS_LANE_GROUPS`: analysis used explicit same-finger simultaneous lane groups
+- `FOOT_INPUT_USED`: the selected trace used foot resources
 - `BEAM_PRUNED`
 
 `EXTREME_KEY_COUNT` does not mean "humanly impossible". It means the current automatic search range/model did not find a sufficiently practical solution.
