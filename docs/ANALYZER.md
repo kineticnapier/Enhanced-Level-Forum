@@ -35,11 +35,53 @@ WYSI-replay.html
 
 です。5K/7Kなども明示指定すれば解析できます。内部APIは64Kまで受け付けます。
 
-高Kでは左右を均等に分けた抽象キー資源として扱います。32Kは `L16..L1 / R1..R16`、36Kは `L18..L1 / R1..R18` です。これは32本/36本の物理的な人間の指を意味するものではなく、キーボード・複数入力デバイス・足などを含めた入力資源の近似です。
+高Kのデフォルトモデルは左右を均等に分けた抽象キー資源です。32Kは `L16..L1 / R1..R16`、36Kは `L18..L1 / R1..R18` です。これは32本/36本の物理的な人間の指を意味しません。実際のキーボード配置が不明な場合の入力資源近似です。
 
 現在のDPは平均コストだけでなく、rolling local peak (`peakLocalCostPerPress`) も記録します。4Kで全体平均が低くても、局所burstが6Kで大幅に軽くなる場合は4Kを十分とは判定しにくくします。
 
 2キーの通常交互は `LI ↔ RI` を優先し、3Kでは `LI / RI / RM` を使って三連系ロールを表現します。
+
+### Lane と physical finger
+
+`fingering-dp-v0.8` では、キー/lane数と物理的な指を別の状態として扱えます。
+
+```text
+Lane / key
+   ↓ mapped to
+Physical finger
+```
+
+実配置が分かる場合はJSON入力へ `laneFingerMap` と、必要なら `laneLabels` を渡します。同じ物理指を複数laneへ割り当てても構いません。
+
+```json
+{
+  "keyCounts": [16],
+  "traceKeyCount": 16,
+  "laneLabels": [
+    "K01", "K02", "K03", "K04", "K05", "K06", "K07", "K08",
+    "K09", "K10", "K11", "K12", "K13", "K14", "K15", "K16"
+  ],
+  "laneFingerMap": [
+    "LP", "LR", "LM", "LI", "LP", "LP", "LT", "LT",
+    "RI", "RM", "RR", "RP", "RT", "RT", "RP", "RP"
+  ],
+  "hitTimesMs": [0, 60, 120, 180]
+}
+```
+
+この例では16 laneですが物理指は10本です。DP内部では:
+
+- `lastUse` / 再使用ペナルティをlaneではなく物理指ごとに追跡する
+- 同じ物理指に割り当てられた別laneへ移るときだけ、小さい `laneSwitchWeight` / `laneJumpWeight` を加える
+- 同時押し中は、同じ物理指を2回使えない
+- lane数が多いだけで物理的な同時入力能力が増えたことにはしない
+- 手全体を移動する一般的な「hand reposition cost」は入れない。基本的に手は固定したまま、参加する指とlaneが変わるモデルにする
+
+という扱いになります。上の16-lane例で11同時押しを与えると、16 laneあることを理由に成功扱いせず、10本の物理指制約で `SIMULTANEOUS_PRESS_COUNT_EXCEEDS_PHYSICAL_FINGERS` になります。
+
+出力には `laneProfile`, `physicalFingerProfile`, `physicalFingerCount`, `laneCounts`, `fingerCounts`, `laneSwitchRate` を含めます。Replay互換のため `fingerProfile` は現在lane表示用profileとしても残しています。traceには `lane` / `laneLabel` と `physicalFinger` / `physicalFingerLabel` の両方を出します。
+
+`laneFingerMap` を使った結果には情報用warning `CUSTOM_LANE_FINGER_MAP` が付きます。エラーではありません。
 
 ## Replay Viewer
 
@@ -88,6 +130,7 @@ Replayはタイミング、譜面形状、惑星位置、Twirl、SetSpeed、推�
 - `MULTI_KEYBOARD_LIKELY`: practical key countが10Kを超える
 - `EXTREME_KEY_COUNT`: 自動探索上限36Kまで試してもpractical thresholdへ到達しない
 - `HIGH_SIMULTANEOUS_PRESS_COUNT`
+- `CUSTOM_LANE_FINGER_MAP`: 実lane→物理指mappingを使って解析した
 - `BEAM_PRUNED`
 
 `EXTREME_KEY_COUNT` は「人間には不可能」という意味ではなく、現在の自動探索範囲/モデルでは十分な運指を見つけられなかった、という警告です。
