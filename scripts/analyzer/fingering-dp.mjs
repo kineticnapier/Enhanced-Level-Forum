@@ -1,4 +1,4 @@
-export const FINGERING_MODEL_VERSION = 'fingering-dp-v0.7'
+export const FINGERING_MODEL_VERSION = 'fingering-dp-v0.8'
 
 const DEFAULT_KEY_COUNTS = [2, 3, 4, 6, 8, 10, 12, 16, 24, 32, 36]
 const DEFAULT_OPTIONS = {
@@ -12,6 +12,8 @@ const DEFAULT_OPTIONS = {
   fingerPreferenceWeight: 0.08,
   reversalWeight: 0.12,
   longRunWeight: 0.025,
+  laneSwitchWeight: 0.03,
+  laneJumpWeight: 0.015,
   localWindowPresses: 12,
   practicalCostPerPress: 0.75,
   practicalPeakCostPerPress: 1.15,
@@ -22,6 +24,32 @@ const DEFAULT_OPTIONS = {
   saturationLookahead: 2,
   fullCurve: false,
   collectTrace: false,
+}
+
+const NAMED_KEY_PROFILES = {
+  1: ['RI'],
+  2: ['LI', 'RI'],
+  3: ['LI', 'RI', 'RM'],
+  4: ['LM', 'LI', 'RI', 'RM'],
+  5: ['LR', 'LM', 'LI', 'RI', 'RM'],
+  6: ['LR', 'LM', 'LI', 'RI', 'RM', 'RR'],
+  7: ['LP', 'LR', 'LM', 'LI', 'RI', 'RM', 'RR'],
+  8: ['LP', 'LR', 'LM', 'LI', 'RI', 'RM', 'RR', 'RP'],
+  9: ['LP', 'LR', 'LM', 'LI', 'LT', 'RI', 'RM', 'RR', 'RP'],
+  10: ['LP', 'LR', 'LM', 'LI', 'LT', 'RT', 'RI', 'RM', 'RR', 'RP'],
+}
+
+const NAMED_FINGER_META = {
+  LP: { hand: 'L', order: 0, digitRank: 3, preference: 0.9 },
+  LR: { hand: 'L', order: 1, digitRank: 2, preference: 0.52 },
+  LM: { hand: 'L', order: 2, digitRank: 1, preference: 0.22 },
+  LI: { hand: 'L', order: 3, digitRank: 0, preference: 0 },
+  LT: { hand: 'L', order: 4, digitRank: 0.6, preference: 0.62 },
+  RT: { hand: 'R', order: 0, digitRank: 0.6, preference: 0.62 },
+  RI: { hand: 'R', order: 1, digitRank: 0, preference: 0 },
+  RM: { hand: 'R', order: 2, digitRank: 1, preference: 0.22 },
+  RR: { hand: 'R', order: 3, digitRank: 2, preference: 0.52 },
+  RP: { hand: 'R', order: 4, digitRank: 3, preference: 0.9 },
 }
 
 function finiteNumber(value, name) {
@@ -58,6 +86,8 @@ function effectiveBeamWidth(requested, keyCount) {
 }
 
 function digitInfo(label, fallbackOrder) {
+  const named = NAMED_FINGER_META[label]
+  if (named) return { digitRank: named.digitRank, preference: named.preference }
   const digit = label.slice(-1)
   if (digit === 'I') return { digitRank: 0, preference: 0 }
   if (digit === 'M') return { digitRank: 1, preference: 0.22 }
@@ -67,33 +97,90 @@ function digitInfo(label, fallbackOrder) {
   return { digitRank: fallbackOrder, preference: Math.min(1, fallbackOrder * 0.18) }
 }
 
-function handProfile(keyCount) {
-  const named = {
-    1: ['RI'],
-    2: ['LI', 'RI'],
-    3: ['LI', 'RI', 'RM'],
-    4: ['LM', 'LI', 'RI', 'RM'],
-    5: ['LR', 'LM', 'LI', 'RI', 'RM'],
-    6: ['LR', 'LM', 'LI', 'RI', 'RM', 'RR'],
-    7: ['LP', 'LR', 'LM', 'LI', 'RI', 'RM', 'RR'],
-    8: ['LP', 'LR', 'LM', 'LI', 'RI', 'RM', 'RR', 'RP'],
-    9: ['LP', 'LR', 'LM', 'LI', 'LT', 'RI', 'RM', 'RR', 'RP'],
-    10: ['LP', 'LR', 'LM', 'LI', 'LT', 'RT', 'RI', 'RM', 'RR', 'RP'],
-  }
-  const labels = named[keyCount] ?? Array.from({ length: keyCount }, (_, i) => {
-    const leftCount = Math.ceil(keyCount / 2)
-    return i < leftCount ? `L${leftCount - i}` : `R${i - leftCount + 1}`
-  })
-  const leftCount = labels.filter((label) => label.startsWith('L')).length
-  return labels.map((label, index) => {
-    const hand = label.startsWith('L') ? 'L' : 'R'
-    const order = hand === 'L' ? index : index - leftCount
-    return { index, label, hand, order, ...digitInfo(label, order) }
+function inferHand(label, fallbackIndex, keyCount) {
+  if (label.startsWith('L')) return 'L'
+  if (label.startsWith('R')) return 'R'
+  return fallbackIndex < keyCount / 2 ? 'L' : 'R'
+}
+
+function defaultLaneLabels(keyCount) {
+  const named = NAMED_KEY_PROFILES[keyCount]
+  if (named) return named.slice()
+  const leftCount = Math.ceil(keyCount / 2)
+  return Array.from({ length: keyCount }, (_, i) => i < leftCount ? `L${leftCount - i}` : `R${i - leftCount + 1}`)
+}
+
+function normalizeLaneFingerMap(rawInput, keyCount) {
+  const map = rawInput?.laneFingerMap
+  if (!Array.isArray(map)) return null
+  if (map.length !== keyCount) throw new Error(`laneFingerMap must contain exactly ${keyCount} entries`)
+  const labels = Array.isArray(rawInput?.laneLabels) ? rawInput.laneLabels : null
+  if (labels && labels.length !== keyCount) throw new Error(`laneLabels must contain exactly ${keyCount} entries`)
+
+  return map.map((entry, index) => {
+    const object = entry && typeof entry === 'object' && !Array.isArray(entry) ? entry : null
+    const fingerLabel = String(object?.fingerLabel ?? object?.finger ?? object?.physicalFinger ?? entry ?? '').trim()
+    if (!fingerLabel) throw new Error(`laneFingerMap[${index}] must name a physical finger/resource`)
+    const laneLabel = String(object?.laneLabel ?? object?.lane ?? labels?.[index] ?? `K${String(index + 1).padStart(2, '0')}`).trim()
+    if (!laneLabel) throw new Error(`laneFingerMap[${index}] lane label must not be empty`)
+    return {
+      laneLabel,
+      fingerLabel,
+      hand: object?.hand === 'L' || object?.hand === 'R' ? object.hand : null,
+      fingerOrder: Number.isFinite(Number(object?.fingerOrder)) ? Number(object.fingerOrder) : null,
+      digitRank: Number.isFinite(Number(object?.digitRank)) ? Number(object.digitRank) : null,
+      preference: Number.isFinite(Number(object?.preference)) ? Number(object.preference) : null,
+    }
   })
 }
 
+function buildProfiles(rawInput, keyCount) {
+  const customMap = normalizeLaneFingerMap(rawInput, keyCount)
+  const defaultLabels = defaultLaneLabels(keyCount)
+  const entries = customMap ?? defaultLabels.map((label) => ({ laneLabel: label, fingerLabel: label, hand: null, fingerOrder: null, digitRank: null, preference: null }))
+
+  const fingerProfile = []
+  const fingerIndexByLabel = new Map()
+  const fallbackOrderByHand = { L: 0, R: 0 }
+  const laneOrderByHand = { L: 0, R: 0 }
+  const laneProfile = []
+
+  for (let laneIndex = 0; laneIndex < entries.length; laneIndex++) {
+    const entry = entries[laneIndex]
+    let fingerIndex = fingerIndexByLabel.get(entry.fingerLabel)
+    if (fingerIndex === undefined) {
+      const named = NAMED_FINGER_META[entry.fingerLabel]
+      const hand = entry.hand ?? named?.hand ?? inferHand(entry.fingerLabel, laneIndex, keyCount)
+      const fallbackOrder = fallbackOrderByHand[hand]++
+      const info = digitInfo(entry.fingerLabel, fallbackOrder)
+      fingerIndex = fingerProfile.length
+      fingerIndexByLabel.set(entry.fingerLabel, fingerIndex)
+      fingerProfile.push({
+        index: fingerIndex,
+        label: entry.fingerLabel,
+        hand,
+        order: entry.fingerOrder ?? named?.order ?? fallbackOrder,
+        digitRank: entry.digitRank ?? info.digitRank,
+        preference: entry.preference ?? info.preference,
+      })
+    }
+
+    const finger = fingerProfile[fingerIndex]
+    laneProfile.push({
+      index: laneIndex,
+      label: entry.laneLabel,
+      hand: finger.hand,
+      order: laneOrderByHand[finger.hand]++,
+      physicalFinger: fingerIndex,
+      physicalFingerLabel: finger.label,
+    })
+  }
+
+  return { laneProfile, fingerProfile, customLaneFingerMap: customMap !== null }
+}
+
 function stateKey(state) {
-  return `${state.prevFinger}|${state.lastFinger}|${state.sameHandRun}|${state.lastUse.join(',')}`
+  return `${state.prevFinger}|${state.lastFinger}|${state.lastLane}|${state.sameHandRun}|${state.lastUse.join(',')}|${state.lastLaneByFinger.join(',')}`
 }
 
 function keepBest(states, beamWidth) {
@@ -107,7 +194,9 @@ function keepBest(states, beamWidth) {
   return { states: sorted.slice(0, beamWidth), pruned: Math.max(0, sorted.length - beamWidth) }
 }
 
-function transitionCost(state, finger, timeMs, profile, options) {
+function transitionCost(state, laneIndex, timeMs, laneProfile, fingerProfile, options) {
+  const lane = laneProfile[laneIndex]
+  const finger = lane.physicalFinger
   const previousUse = state.lastUse[finger]
   let reusePenalty = 0
   let gap = null
@@ -120,9 +209,9 @@ function transitionCost(state, finger, timeMs, profile, options) {
     }
   }
 
-  const current = profile[finger]
-  const last = state.lastFinger >= 0 ? profile[state.lastFinger] : null
-  const prev = state.prevFinger >= 0 ? profile[state.prevFinger] : null
+  const current = fingerProfile[finger]
+  const last = state.lastFinger >= 0 ? fingerProfile[state.lastFinger] : null
+  const prev = state.prevFinger >= 0 ? fingerProfile[state.prevFinger] : null
   const lastGap = state.lastEventTime >= 0 ? Math.max(0, timeMs - state.lastEventTime) : Infinity
   const fast = Math.max(0, 1 - lastGap / 190)
 
@@ -145,23 +234,44 @@ function transitionCost(state, finger, timeMs, profile, options) {
     }
   }
 
-  return { total: reusePenalty + ergonomicPenalty, reusePenalty, ergonomicPenalty, gap }
+  let laneSwitchPenalty = 0
+  const previousLane = state.lastLaneByFinger[finger]
+  if (previousLane >= 0 && previousLane !== laneIndex && gap !== null) {
+    const laneFast = Math.max(0, 1 - gap / 260)
+    const previousLaneInfo = laneProfile[previousLane]
+    const laneDistance = previousLaneInfo?.hand === lane.hand ? Math.abs(lane.order - previousLaneInfo.order) : 1
+    laneSwitchPenalty = (options.laneSwitchWeight + Math.max(0, laneDistance - 1) * options.laneJumpWeight) * laneFast
+  }
+
+  return {
+    total: reusePenalty + ergonomicPenalty + laneSwitchPenalty,
+    reusePenalty,
+    ergonomicPenalty,
+    laneSwitchPenalty,
+    gap,
+    physicalFinger: finger,
+  }
 }
 
-function initialState(keyCount) {
+function initialState(laneCount, fingerCount) {
   return {
     cost: 0,
     prevFinger: -1,
     lastFinger: -1,
+    lastLane: -1,
     lastEventTime: -1,
     sameHandRun: 0,
-    lastUse: Array(keyCount).fill(-1),
-    counts: Array(keyCount).fill(0),
-    minGap: Array(keyCount).fill(null),
+    lastUse: Array(fingerCount).fill(-1),
+    lastLaneByFinger: Array(fingerCount).fill(-1),
+    laneCounts: Array(laneCount).fill(0),
+    fingerCounts: Array(fingerCount).fill(0),
+    minGap: Array(fingerCount).fill(null),
     sameFingerTransitions: 0,
-    switches: 0,
+    fingerSwitches: 0,
+    laneSwitches: 0,
     handSwitches: 0,
     maxReusePenalty: 0,
+    maxLaneSwitchPenalty: 0,
     maxTransitionCost: 0,
     recentCosts: [],
     recentCostSum: 0,
@@ -181,15 +291,41 @@ function pushLocalCost(state, transitionCostValue, windowSize) {
   }
 }
 
-function recoverTrace(node, profile) {
+function recoverTrace(node, laneProfile, fingerProfile) {
   const out = []
   while (node) {
-    const finger = profile[node.finger]
-    out.push({ timeMs: node.timeMs, finger: node.finger, fingerLabel: finger.label, hand: finger.hand, eventIndex: node.eventIndex, pressIndex: node.pressIndex })
+    const lane = laneProfile[node.lane]
+    const finger = fingerProfile[node.finger]
+    out.push({
+      timeMs: node.timeMs,
+      lane: node.lane,
+      laneLabel: lane.label,
+      finger: node.lane,
+      fingerLabel: finger.label,
+      physicalFinger: node.finger,
+      physicalFingerLabel: finger.label,
+      hand: finger.hand,
+      eventIndex: node.eventIndex,
+      pressIndex: node.pressIndex,
+    })
     node = node.parent
   }
   out.reverse()
   return out
+}
+
+function inputForKeyCount(rawInput, keyCount) {
+  let laneFingerMap = null
+  let laneLabels = null
+  if (Array.isArray(rawInput?.laneFingerMap) && rawInput.laneFingerMap.length === keyCount) {
+    laneFingerMap = rawInput.laneFingerMap
+    laneLabels = Array.isArray(rawInput?.laneLabels) && rawInput.laneLabels.length === keyCount ? rawInput.laneLabels : null
+  }
+  const keyedMap = rawInput?.laneFingerMaps?.[keyCount] ?? rawInput?.laneFingerMaps?.[String(keyCount)]
+  if (Array.isArray(keyedMap)) laneFingerMap = keyedMap
+  const keyedLabels = rawInput?.laneLabelsByKeyCount?.[keyCount] ?? rawInput?.laneLabelsByKeyCount?.[String(keyCount)]
+  if (Array.isArray(keyedLabels)) laneLabels = keyedLabels
+  return { laneFingerMap, laneLabels }
 }
 
 export function estimateFingeringForKeyCount(rawInput, keyCount, rawOptions = {}) {
@@ -199,52 +335,93 @@ export function estimateFingeringForKeyCount(rawInput, keyCount, rawOptions = {}
   const options = { ...DEFAULT_OPTIONS, ...rawOptions }
   const beamWidth = effectiveBeamWidth(options.beamWidth, keyCount)
   const collectTrace = options.collectTrace === true
-  const profile = handProfile(keyCount)
+  const { laneProfile, fingerProfile, customLaneFingerMap } = buildProfiles(rawInput, keyCount)
+  const physicalFingerCount = fingerProfile.length
   const localWindowPresses = Math.max(2, Math.trunc(finiteNumber(options.localWindowPresses, 'localWindowPresses')))
 
   const totalPresses = events.reduce((sum, event) => sum + event.presses, 0)
   const maxSimultaneousPresses = events.reduce((max, event) => Math.max(max, event.presses), 0)
-  if (maxSimultaneousPresses > keyCount) {
-    return { keyCount, feasible: false, reason: 'SIMULTANEOUS_PRESS_COUNT_EXCEEDS_KEYS', totalCost: null, costPerPress: null, peakLocalCostPerPress: null, maxTransitionCost: null, totalPresses, maxSimultaneousPresses, sameFingerRate: null, switchRate: null, handSwitchRate: null, maxReusePenalty: null, fingerCounts: null, minGapMsPerFinger: null, prunedStates: 0, beamWidth, fingeringTrace: null, fingerProfile: profile }
+  const impossibleChord = maxSimultaneousPresses > physicalFingerCount
+  if (impossibleChord) {
+    return {
+      keyCount,
+      physicalFingerCount,
+      customLaneFingerMap,
+      feasible: false,
+      reason: 'SIMULTANEOUS_PRESS_COUNT_EXCEEDS_PHYSICAL_FINGERS',
+      totalCost: null,
+      costPerPress: null,
+      peakLocalCostPerPress: null,
+      maxTransitionCost: null,
+      totalPresses,
+      maxSimultaneousPresses,
+      sameFingerRate: null,
+      switchRate: null,
+      laneSwitchRate: null,
+      handSwitchRate: null,
+      maxReusePenalty: null,
+      maxLaneSwitchPenalty: null,
+      laneCounts: null,
+      fingerCounts: null,
+      minGapMsPerFinger: null,
+      prunedStates: 0,
+      beamWidth,
+      fingeringTrace: null,
+      laneProfile,
+      fingerProfile: laneProfile,
+      physicalFingerProfile: fingerProfile,
+    }
   }
 
-  let beam = [initialState(keyCount)]
+  let beam = [initialState(keyCount, physicalFingerCount)]
   let prunedStates = 0
 
   for (let eventIndex = 0; eventIndex < events.length; eventIndex++) {
     const event = events[eventIndex]
-    let chordBeam = beam.map((state) => ({ state, used: [] }))
+    let chordBeam = beam.map((state) => ({ state, usedLanes: [], usedFingers: [] }))
     for (let pressIndex = 0; pressIndex < event.presses; pressIndex++) {
       const candidates = []
       for (const wrapper of chordBeam) {
-        for (let finger = 0; finger < keyCount; finger++) {
-          if (wrapper.used.includes(finger)) continue
-          const tc = transitionCost(wrapper.state, finger, event.timeMs, profile, options)
-          const lastProfile = wrapper.state.lastFinger >= 0 ? profile[wrapper.state.lastFinger] : null
-          const currentProfile = profile[finger]
+        for (let laneIndex = 0; laneIndex < keyCount; laneIndex++) {
+          const physicalFinger = laneProfile[laneIndex].physicalFinger
+          if (wrapper.usedLanes.includes(laneIndex) || wrapper.usedFingers.includes(physicalFinger)) continue
+          const tc = transitionCost(wrapper.state, laneIndex, event.timeMs, laneProfile, fingerProfile, options)
+          const lastProfile = wrapper.state.lastFinger >= 0 ? fingerProfile[wrapper.state.lastFinger] : null
+          const currentProfile = fingerProfile[physicalFinger]
           const handChanged = Boolean(lastProfile && lastProfile.hand !== currentProfile.hand)
           const local = pushLocalCost(wrapper.state, tc.total, localWindowPresses)
           const next = {
             cost: wrapper.state.cost + tc.total,
             prevFinger: wrapper.state.lastFinger,
-            lastFinger: finger,
+            lastFinger: physicalFinger,
+            lastLane: laneIndex,
             lastEventTime: event.timeMs,
             sameHandRun: lastProfile ? (handChanged ? 1 : wrapper.state.sameHandRun + 1) : 1,
             lastUse: wrapper.state.lastUse.slice(),
-            counts: wrapper.state.counts.slice(),
+            lastLaneByFinger: wrapper.state.lastLaneByFinger.slice(),
+            laneCounts: wrapper.state.laneCounts.slice(),
+            fingerCounts: wrapper.state.fingerCounts.slice(),
             minGap: wrapper.state.minGap.slice(),
-            sameFingerTransitions: wrapper.state.sameFingerTransitions + (wrapper.state.lastFinger === finger ? 1 : 0),
-            switches: wrapper.state.switches + (wrapper.state.lastFinger >= 0 && wrapper.state.lastFinger !== finger ? 1 : 0),
+            sameFingerTransitions: wrapper.state.sameFingerTransitions + (wrapper.state.lastFinger === physicalFinger ? 1 : 0),
+            fingerSwitches: wrapper.state.fingerSwitches + (wrapper.state.lastFinger >= 0 && wrapper.state.lastFinger !== physicalFinger ? 1 : 0),
+            laneSwitches: wrapper.state.laneSwitches + (wrapper.state.lastLane >= 0 && wrapper.state.lastLane !== laneIndex ? 1 : 0),
             handSwitches: wrapper.state.handSwitches + (handChanged ? 1 : 0),
             maxReusePenalty: Math.max(wrapper.state.maxReusePenalty, tc.reusePenalty),
+            maxLaneSwitchPenalty: Math.max(wrapper.state.maxLaneSwitchPenalty, tc.laneSwitchPenalty),
             maxTransitionCost: Math.max(wrapper.state.maxTransitionCost, tc.total),
             ...local,
-            trace: collectTrace ? { timeMs: event.timeMs, finger, eventIndex, pressIndex, parent: wrapper.state.trace } : null,
+            trace: collectTrace ? { timeMs: event.timeMs, lane: laneIndex, finger: physicalFinger, eventIndex, pressIndex, parent: wrapper.state.trace } : null,
           }
-          next.lastUse[finger] = event.timeMs
-          next.counts[finger]++
-          if (tc.gap !== null) next.minGap[finger] = next.minGap[finger] === null ? tc.gap : Math.min(next.minGap[finger], tc.gap)
-          candidates.push({ state: next, used: [...wrapper.used, finger] })
+          next.lastUse[physicalFinger] = event.timeMs
+          next.lastLaneByFinger[physicalFinger] = laneIndex
+          next.laneCounts[laneIndex]++
+          next.fingerCounts[physicalFinger]++
+          if (tc.gap !== null) next.minGap[physicalFinger] = next.minGap[physicalFinger] === null ? tc.gap : Math.min(next.minGap[physicalFinger], tc.gap)
+          candidates.push({
+            state: next,
+            usedLanes: [...wrapper.usedLanes, laneIndex],
+            usedFingers: [...wrapper.usedFingers, physicalFinger],
+          })
         }
       }
       candidates.sort((a, b) => a.state.cost - b.state.cost)
@@ -259,13 +436,42 @@ export function estimateFingeringForKeyCount(rawInput, keyCount, rawOptions = {}
   }
 
   if (!beam.length) {
-    return { keyCount, feasible: false, reason: 'NO_FINGERING_PATH', totalCost: null, costPerPress: null, peakLocalCostPerPress: null, maxTransitionCost: null, totalPresses, maxSimultaneousPresses, sameFingerRate: null, switchRate: null, handSwitchRate: null, maxReusePenalty: null, fingerCounts: null, minGapMsPerFinger: null, prunedStates, beamWidth, fingeringTrace: null, fingerProfile: profile }
+    return {
+      keyCount,
+      physicalFingerCount,
+      customLaneFingerMap,
+      feasible: false,
+      reason: 'NO_FINGERING_PATH',
+      totalCost: null,
+      costPerPress: null,
+      peakLocalCostPerPress: null,
+      maxTransitionCost: null,
+      totalPresses,
+      maxSimultaneousPresses,
+      sameFingerRate: null,
+      switchRate: null,
+      laneSwitchRate: null,
+      handSwitchRate: null,
+      maxReusePenalty: null,
+      maxLaneSwitchPenalty: null,
+      laneCounts: null,
+      fingerCounts: null,
+      minGapMsPerFinger: null,
+      prunedStates,
+      beamWidth,
+      fingeringTrace: null,
+      laneProfile,
+      fingerProfile: laneProfile,
+      physicalFingerProfile: fingerProfile,
+    }
   }
 
   const best = beam[0]
   const transitions = Math.max(1, totalPresses - 1)
   return {
     keyCount,
+    physicalFingerCount,
+    customLaneFingerMap,
     feasible: true,
     totalCost: best.cost,
     costPerPress: totalPresses ? best.cost / totalPresses : 0,
@@ -275,15 +481,20 @@ export function estimateFingeringForKeyCount(rawInput, keyCount, rawOptions = {}
     totalPresses,
     maxSimultaneousPresses,
     sameFingerRate: best.sameFingerTransitions / transitions,
-    switchRate: best.switches / transitions,
+    switchRate: best.fingerSwitches / transitions,
+    laneSwitchRate: best.laneSwitches / transitions,
     handSwitchRate: best.handSwitches / transitions,
     maxReusePenalty: best.maxReusePenalty,
-    fingerCounts: best.counts,
+    maxLaneSwitchPenalty: best.maxLaneSwitchPenalty,
+    laneCounts: best.laneCounts,
+    fingerCounts: best.fingerCounts,
     minGapMsPerFinger: best.minGap,
     prunedStates,
     beamWidth,
-    fingerProfile: profile,
-    fingeringTrace: collectTrace ? recoverTrace(best.trace, profile) : null,
+    laneProfile,
+    fingerProfile: laneProfile,
+    physicalFingerProfile: fingerProfile,
+    fingeringTrace: collectTrace ? recoverTrace(best.trace, laneProfile, fingerProfile) : null,
   }
 }
 
@@ -332,7 +543,8 @@ export function analyzeFingering(rawInput, rawOptions = {}) {
 
   const curve = []
   for (const keyCount of keyCounts) {
-    const point = estimateFingeringForKeyCount({ events }, keyCount, { ...options, collectTrace: false })
+    const mapping = inputForKeyCount(rawInput, keyCount)
+    const point = estimateFingeringForKeyCount({ events, ...mapping }, keyCount, { ...options, collectTrace: false })
     curve.push(point)
     if (!explicitKeyCounts && options.fullCurve !== true) {
       const stableComfortable = selectThresholdPoint(curve, options, 'comfortable', true)
@@ -345,13 +557,15 @@ export function analyzeFingering(rawInput, rawOptions = {}) {
   const traceKeyCount = Number.isFinite(Number(rawInput?.traceKeyCount))
     ? Math.trunc(Number(rawInput.traceKeyCount))
     : (comfortable?.keyCount ?? practical?.keyCount ?? curve.find((point) => point.feasible)?.keyCount ?? null)
-  const traced = traceKeyCount ? estimateFingeringForKeyCount({ events }, traceKeyCount, { ...options, collectTrace: true }) : null
+  const traceMapping = traceKeyCount ? inputForKeyCount(rawInput, traceKeyCount) : {}
+  const traced = traceKeyCount ? estimateFingeringForKeyCount({ events, ...traceMapping }, traceKeyCount, { ...options, collectTrace: true }) : null
   const standard10 = curve.find((point) => point.keyCount <= 10 && qualifies(point, options.practicalCostPerPress, options.practicalPeakCostPerPress)) ?? null
   const warnings = []
   if (!standard10 && curve.some((point) => point.keyCount >= 10)) warnings.push('STANDARD_FINGERING_MODEL_OUT_OF_RANGE')
   if (practical && practical.keyCount > 10) warnings.push('MULTI_KEYBOARD_LIKELY')
   if (!practical && curve[curve.length - 1]?.keyCount === keyCounts[keyCounts.length - 1]) warnings.push('EXTREME_KEY_COUNT')
   if (events.some((event) => event.presses > 10)) warnings.push('HIGH_SIMULTANEOUS_PRESS_COUNT')
+  if (curve.some((point) => point.customLaneFingerMap) || traced?.customLaneFingerMap) warnings.push('CUSTOM_LANE_FINGER_MAP')
   if (curve.some((point) => point.prunedStates > 0) || (traced?.prunedStates ?? 0) > 0) warnings.push('BEAM_PRUNED')
 
   return {
@@ -372,6 +586,7 @@ export function analyzeFingering(rawInput, rawOptions = {}) {
       requestedKeyCounts: keyCounts,
       analyzedKeyCounts: curve.map((point) => point.keyCount),
       adaptiveStop: !explicitKeyCounts && options.fullCurve !== true,
+      customLaneFingerMapKeyCounts: curve.filter((point) => point.customLaneFingerMap).map((point) => point.keyCount),
       beamWidth: options.beamWidth,
       reuseWindowMs: options.reuseWindowMs,
       reuseWeight: options.reuseWeight,
@@ -382,6 +597,8 @@ export function analyzeFingering(rawInput, rawOptions = {}) {
       fingerPreferenceWeight: options.fingerPreferenceWeight,
       reversalWeight: options.reversalWeight,
       longRunWeight: options.longRunWeight,
+      laneSwitchWeight: options.laneSwitchWeight,
+      laneJumpWeight: options.laneJumpWeight,
       localWindowPresses: options.localWindowPresses,
       practicalCostPerPress: options.practicalCostPerPress,
       practicalPeakCostPerPress: options.practicalPeakCostPerPress,
@@ -395,7 +612,10 @@ export function analyzeFingering(rawInput, rawOptions = {}) {
     estimatedMinKeys: practical?.keyCount ?? null,
     comfortableKeys: comfortable?.keyCount ?? null,
     traceKeyCount: traced?.keyCount ?? null,
+    physicalFingerCount: traced?.physicalFingerCount ?? null,
+    laneProfile: traced?.laneProfile ?? null,
     fingerProfile: traced?.fingerProfile ?? null,
+    physicalFingerProfile: traced?.physicalFingerProfile ?? null,
     fingeringTrace: traced?.fingeringTrace ?? null,
     traceStats: traced ? {
       totalCost: traced.totalCost,
@@ -403,9 +623,12 @@ export function analyzeFingering(rawInput, rawOptions = {}) {
       peakLocalCostPerPress: traced.peakLocalCostPerPress,
       maxTransitionCost: traced.maxTransitionCost,
       localWindowPresses: traced.localWindowPresses,
+      laneCounts: traced.laneCounts,
       fingerCounts: traced.fingerCounts,
       minGapMsPerFinger: traced.minGapMsPerFinger,
+      laneSwitchRate: traced.laneSwitchRate,
       handSwitchRate: traced.handSwitchRate,
+      maxLaneSwitchPenalty: traced.maxLaneSwitchPenalty,
       beamWidth: traced.beamWidth,
       prunedStates: traced.prunedStates,
     } : null,
