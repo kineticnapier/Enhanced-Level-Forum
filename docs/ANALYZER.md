@@ -43,7 +43,7 @@ WYSI-replay.html
 
 ### Lane と physical finger
 
-`fingering-dp-v0.8` では、キー/lane数と物理的な指を別の状態として扱えます。
+`fingering-dp-v0.9` では、キー/lane数と物理的な指を別の状態として扱えます。
 
 ```text
 Lane / key
@@ -52,6 +52,8 @@ Physical finger
 ```
 
 実配置が分かる場合はJSON入力へ `laneFingerMap` と、必要なら `laneLabels` を渡します。同じ物理指を複数laneへ割り当てても構いません。
+
+さらに、1本の指で複数キーを同時に押せる配置は `simultaneousLaneGroups` で明示します。1グループ内のlaneは同じ物理指へ割り当てられている必要があり、そのグループの任意の部分集合を同時押し可能として扱います。
 
 ```json
 {
@@ -65,23 +67,36 @@ Physical finger
     "LP", "LR", "LM", "LI", "LP", "LP", "LT", "LT",
     "RI", "RM", "RR", "RP", "RT", "RT", "RP", "RP"
   ],
+  "simultaneousLaneGroups": [
+    ["K05", "K06"]
+  ],
   "hitTimesMs": [0, 60, 120, 180]
 }
 ```
 
-この例では16 laneですが物理指は10本です。DP内部では:
+この例では16 lane・10 physical fingersですが、`K05 + K06` を同じ `LP` で同時に押せると明示しているため、simultaneous capacityは11になります。
+
+DP内部では:
 
 - `lastUse` / 再使用ペナルティをlaneではなく物理指ごとに追跡する
 - 同じ物理指に割り当てられた別laneへ移るときだけ、小さい `laneSwitchWeight` / `laneJumpWeight` を加える
-- 同時押し中は、同じ物理指を2回使えない
-- lane数が多いだけで物理的な同時入力能力が増えたことにはしない
+- 同一指の同時押しは、`simultaneousLaneGroups` で許可されたlane集合だけ通す
+- 許可された同一指同時押しを「0msで同じ指を再使用した」とは数えない
+- `simultaneousLaneGroups` が無い指は、1つのchordにつき1laneだけ担当できる
+- lane数だけでなく、実際のgroup構成から `simultaneousCapacity` を計算する
 - 手全体を移動する一般的な「hand reposition cost」は入れない。基本的に手は固定したまま、参加する指とlaneが変わるモデルにする
 
-という扱いになります。上の16-lane例で11同時押しを与えると、16 laneあることを理由に成功扱いせず、10本の物理指制約で `SIMULTANEOUS_PRESS_COUNT_EXCEEDS_PHYSICAL_FINGERS` になります。
+という扱いになります。
 
-出力には `laneProfile`, `physicalFingerProfile`, `physicalFingerCount`, `laneCounts`, `fingerCounts`, `laneSwitchRate` を含めます。Replay互換のため `fingerProfile` は現在lane表示用profileとしても残しています。traceには `lane` / `laneLabel` と `physicalFinger` / `physicalFingerLabel` の両方を出します。
+同じ16-lane/10-finger mappingでも、group指定が無ければcapacityは10です。`["K05", "K06"]` を許可すると11になり、11同時押しを探索できます。12同時押しなら `SIMULTANEOUS_PRESS_COUNT_EXCEEDS_LAYOUT_CAPACITY` でrejectされます。
 
-`laneFingerMap` を使った結果には情報用warning `CUSTOM_LANE_FINGER_MAP` が付きます。エラーではありません。
+`simultaneousLaneGroups` ではlane labelを推奨します。0始まりのlane indexも指定できます。別々の物理指に属するlaneを1グループへ混ぜると入力エラーになります。
+
+出力には `laneProfile`, `physicalFingerProfile`, `physicalFingerCount`, `simultaneousCapacity`, `simultaneousLaneGroups`, `laneCounts`, `fingerCounts`, `laneSwitchRate` を含めます。Replay互換のため `fingerProfile` は現在lane表示用profileとしても残しています。traceには `lane` / `laneLabel` と `physicalFinger` / `physicalFingerLabel` の両方を出します。
+
+`laneFingerMap` を使った結果には情報用warning `CUSTOM_LANE_FINGER_MAP`、`simultaneousLaneGroups` を使った結果には `CUSTOM_SIMULTANEOUS_LANE_GROUPS` が付きます。どちらもエラーではありません。
+
+key-countごとに別配置を使う場合は `laneFingerMaps`, `laneLabelsByKeyCount`, `simultaneousLaneGroupsByKeyCount` も使用できます。
 
 ## Replay Viewer
 
@@ -131,6 +146,7 @@ Replayはタイミング、譜面形状、惑星位置、Twirl、SetSpeed、推�
 - `EXTREME_KEY_COUNT`: 自動探索上限36Kまで試してもpractical thresholdへ到達しない
 - `HIGH_SIMULTANEOUS_PRESS_COUNT`
 - `CUSTOM_LANE_FINGER_MAP`: 実lane→物理指mappingを使って解析した
+- `CUSTOM_SIMULTANEOUS_LANE_GROUPS`: 同一指の同時押し互換groupを使って解析した
 - `BEAM_PRUNED`
 
 `EXTREME_KEY_COUNT` は「人間には不可能」という意味ではなく、現在の自動探索範囲/モデルでは十分な運指を見つけられなかった、という警告です。
