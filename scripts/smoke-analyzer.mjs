@@ -109,7 +109,7 @@ const direct = analyzeFingering(straight)
 if (direct.input.eventCount !== 3) throw new Error('ADOFAI extractor output must feed fingering DP directly')
 
 const viewer = await readFile(new URL('./visualize-fingering.mjs', import.meta.url), 'utf8')
-for (const invariant of ['fingeringTrace', 'fingerProfile', '<canvas id="stage">', 'ELF ADOFAI Fingering Replay', 'class="keys"', 'leftKeys', 'rightKeys', 'buildKeyViewer', 'keys.compact', 'segmentAt', 'orbitState', 'visualEvents', 'REPLAY_ASSET_FILES', 'tile_unlit.png', 'planet-red.png', 'swirl_red.png', 'speedAsset', 'drawPlanetSheet', 'pressWindowMs=85*rate']) {
+for (const invariant of ['fingeringTrace', 'fingerProfile', '<canvas id="stage">', 'ELF ADOFAI Fingering Replay', 'class="keys"', 'leftKeys', 'rightKeys', 'leftKeys2', 'rightKeys2', 'extraKeys', 'buildKeyViewer', 'keys.compact', 'genericJrp', "'L'+(index+1)", "'R'+(index+1)", "'K'+(17+index)", 'id="kps"', 'id="total"', 'kpsAt', 'traceCountAt', 'key-count', 'segmentAt', 'orbitState', 'visualEvents', 'REPLAY_ASSET_FILES', 'tile_unlit.png', 'planet-red.png', 'swirl_red.png', 'speedAsset', 'drawPlanetSheet', 'pressWindowMs=85*rate']) {
   if (!viewer.includes(invariant)) throw new Error(`fingering visualizer missing: ${invariant}`)
 }
 const assetReadme = await readFile(new URL('./analyzer/replay-assets/README.md', import.meta.url), 'utf8')
@@ -123,4 +123,4 @@ for (const invariant of ['-result.json', '-replay.html', 'visualize-fingering.mj
 }
 
 console.log('DP FINGERING ANALYZER STATIC SMOKE PASSED')
-console.log('.adofai -> JSON + replay HTML; local-peak-aware hand DP -> compact split high-K viewer')
+console.log('.adofai -> JSON + replay HTML; local-peak-aware hand DP -> JRP-style high-K viewer with KPS')
