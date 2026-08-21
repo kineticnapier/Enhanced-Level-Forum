@@ -53,8 +53,6 @@ Physical finger
 
 実配置が分かる場合はJSON入力へ `laneFingerMap` と、必要なら `laneLabels` を渡します。同じ物理指を複数laneへ割り当てても構いません。
 
-さらに、1本の指で複数キーを同時に押せる配置は `simultaneousLaneGroups` で明示します。1グループ内のlaneは同じ物理指へ割り当てられている必要があり、そのグループの任意の部分集合を同時押し可能として扱います。
-
 ```json
 {
   "keyCounts": [16],
@@ -67,42 +65,48 @@ Physical finger
     "LP", "LR", "LM", "LI", "LP", "LP", "LT", "LT",
     "RI", "RM", "RR", "RP", "RT", "RT", "RP", "RP"
   ],
-  "simultaneousLaneGroups": [
-    ["K05", "K06"]
-  ],
   "hitTimesMs": [0, 60, 120, 180]
 }
 ```
 
-この例では16 lane・10 physical fingersですが、`K05 + K06` を同じ `LP` で同時に押せると明示しているため、simultaneous capacityは11になります。
+DP内部では `lastUse` / 再使用ペナルティをlaneではなく物理指ごとに追跡し、同じ物理指に割り当てられた別laneへ移るときだけ小さい `laneSwitchWeight` / `laneJumpWeight` を加えます。手全体を移動する一般的な「hand reposition cost」は入れません。
 
-DP内部では:
+### 同一指の同時押し
 
-- `lastUse` / 再使用ペナルティをlaneではなく物理指ごとに追跡する
-- 同じ物理指に割り当てられた別laneへ移るときだけ、小さい `laneSwitchWeight` / `laneJumpWeight` を加える
-- 同一指の同時押しは、`simultaneousLaneGroups` で許可されたlane集合だけ通す
-- 許可された同一指同時押しを「0msで同じ指を再使用した」とは数えない
-- `simultaneousLaneGroups` が無い指は、1つのchordにつき1laneだけ担当できる
-- lane数だけでなく、実際のgroup構成から `simultaneousCapacity` を計算する
-- 手全体を移動する一般的な「hand reposition cost」は入れない。基本的に手は固定したまま、参加する指とlaneが変わるモデルにする
+物理指数は最大同時押し数のhard capではありません。同じ指で複数キーを同時に押せる実配置は `simultaneousLaneGroups` で明示できます。
 
-という扱いになります。
+```json
+{
+  "simultaneousLaneGroups": [
+    ["K05", "K06"],
+    ["K13", "K14"]
+  ]
+}
+```
 
-同じ16-lane/10-finger mappingでも、group指定が無ければcapacityは10です。`["K05", "K06"]` を許可すると11になり、11同時押しを探索できます。12同時押しなら `SIMULTANEOUS_PRESS_COUNT_EXCEEDS_LAYOUT_CAPACITY` でrejectされます。
-
-`simultaneousLaneGroups` ではlane labelを推奨します。0始まりのlane indexも指定できます。別々の物理指に属するlaneを1グループへ混ぜると入力エラーになります。
+各groupは同じ物理指に割り当てられたlaneだけで構成します。groupの任意の部分集合は同時押し可能として扱い、同一指同時押しを0ms再打鍵としてreuse penaltyへ入れません。配置から `simultaneousCapacity` を計算し、それを超えるchordは `SIMULTANEOUS_PRESS_COUNT_EXCEEDS_LAYOUT_CAPACITY` になります。
 
 出力には `laneProfile`, `physicalFingerProfile`, `physicalFingerCount`, `simultaneousCapacity`, `simultaneousLaneGroups`, `laneCounts`, `fingerCounts`, `laneSwitchRate` を含めます。Replay互換のため `fingerProfile` は現在lane表示用profileとしても残しています。traceには `lane` / `laneLabel` と `physicalFinger` / `physicalFingerLabel` の両方を出します。
 
-`laneFingerMap` を使った結果には情報用warning `CUSTOM_LANE_FINGER_MAP`、`simultaneousLaneGroups` を使った結果には `CUSTOM_SIMULTANEOUS_LANE_GROUPS` が付きます。どちらもエラーではありません。
-
-key-countごとに別配置を使う場合は `laneFingerMaps`, `laneLabelsByKeyCount`, `simultaneousLaneGroupsByKeyCount` も使用できます。
+`laneFingerMap` を使った結果には情報用warning `CUSTOM_LANE_FINGER_MAP` が付きます。エラーではありません。
 
 ## Replay Viewer
 
 Replayはタイミング、譜面形状、惑星位置、Twirl、SetSpeed、推定運指を同じ再生クロックで表示します。
 
-高KのKey Viewerは左右ブロックへ分割し、32K/36Kでは自動的にcompact表示します。狭い画面では各側を複数段に折り返して、画面外へはみ出さないようにします。
+generic high-KのKey ViewerはJRP系の配置へ寄せています。
+
+```text
+L4 L3 L2 L1 | R1 R2 R3 R4
+L8 L7 L6 L5 | R5 R6 R7 R8
+K17 K18 K19 ...
+```
+
+内部の高K抽象資源名（例: `L18`）はKV上では優先順位ベースの `L1..L8 / R1..R8` へ表示し直します。実 `laneFingerMap` を渡したcustom layoutではこの別名化を行わず、実際のlane labelを維持します。
+
+各キーには現在時刻までの累積打鍵数を表示します。下部には直近1秒のrolling `KPS` と現在時刻までの `Total` 打鍵数を表示します。KPSは再生速度ではなく譜面時間基準です。
+
+高Kでは自動的にcompact表示し、17K以降のキーは下側へ折り返します。
 
 本家Texture2Dを書き出している場合は次のアセットを利用できます。
 
@@ -146,7 +150,7 @@ Replayはタイミング、譜面形状、惑星位置、Twirl、SetSpeed、推�
 - `EXTREME_KEY_COUNT`: 自動探索上限36Kまで試してもpractical thresholdへ到達しない
 - `HIGH_SIMULTANEOUS_PRESS_COUNT`
 - `CUSTOM_LANE_FINGER_MAP`: 実lane→物理指mappingを使って解析した
-- `CUSTOM_SIMULTANEOUS_LANE_GROUPS`: 同一指の同時押し互換groupを使って解析した
+- `CUSTOM_SIMULTANEOUS_LANE_GROUPS`: 同一指の同時押しgroupを使って解析した
 - `BEAM_PRUNED`
 
 `EXTREME_KEY_COUNT` は「人間には不可能」という意味ではなく、現在の自動探索範囲/モデルでは十分な運指を見つけられなかった、という警告です。
